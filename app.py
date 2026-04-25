@@ -76,7 +76,8 @@ if cp_nodes:
     st.header("2. Visualización de la Red")
     
     # Usamos Graphviz para dibujar el diagrama
-    dot = graphviz.Digraph(attr={'rankdir': 'LR'}) # De izquierda a derecha
+    dot = graphviz.Digraph()
+    dot.attr(rankdir='LR') # De izquierda a derecha
     
     for index, row in results_pert.iterrows():
         actividad = row['Actividad']
