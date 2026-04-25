@@ -17,7 +17,6 @@ st.markdown("Ingresa tus actividades, descripciones y dependencias. Separa múlt
 # --- 1. ENTRADA DE DATOS (ESTILO AON) ---
 st.header("1. Ingreso de Actividades")
 
-# Datos por defecto basados en tu imagen de ejemplo
 default_data = [
     {"Actividad": "A", "Descripción": "Cimientos", "Predecesores": "", "b": 6.0, "a": 3.0, "m": 4.0},
     {"Actividad": "B", "Descripción": "Plomería/electricidad", "Predecesores": "A", "b": 5.0, "a": 1.0, "m": 2.0},
@@ -32,13 +31,19 @@ st.info("💡 Consejo: Para agregar más actividades, haz clic en el botón '+' 
 
 edited_df = st.data_editor(df_inicial, num_rows="dynamic", use_container_width=True)
 
-mostrar_pasos = st.checkbox("¿Mostrar tabla detallada de revisión (Adelante/Atrás)?", value=True)
+# --- MENÚ DE OPCIONES DE REVISIÓN ---
+st.write("---")
+st.subheader("Opciones de Visualización de la Tabla de CPM")
+tipo_revision = st.radio(
+    "Elige qué datos de revisión quieres analizar:",
+    options=["Ambas (Completo)", "Solo Revisión hacia Adelante (ES, EF)", "Solo Revisión hacia Atrás y Holgura (LS, LF)"],
+    horizontal=True
+)
 
 # --- 2. CÁLCULOS PERT Y CPM (AON) ---
 def process_cpm_network(df):
     if df.empty: return None, None, None, None, None, None
     
-    # 1. Calcular PERT (t y sigma)
     df_calc = df.copy()
     for col in ['b', 'a', 'm']:
         df_calc[col] = pd.to_numeric(df_calc[col], errors='coerce').fillna(0)
@@ -47,14 +52,12 @@ def process_cpm_network(df):
     df_calc['variance'] = ((df_calc['b'] - df_calc['a']) / 6)**2
     df_calc['sigma'] = np.sqrt(df_calc['variance'])
     
-    # 2. Construir Grafo
     G = nx.DiGraph()
     for index, row in df_calc.iterrows():
         act = str(row['Actividad']).strip()
         if act:
             G.add_node(act, weight=row['t'], desc=row['Descripción'])
             
-    # Añadir aristas basadas en predecesores
     for index, row in df_calc.iterrows():
         act = str(row['Actividad']).strip()
         preds = str(row['Predecesores']).replace('-', '').split(',')
@@ -68,7 +71,6 @@ def process_cpm_network(df):
         if not nx.is_directed_acyclic_graph(G):
             return "ERROR_CICLO", None, None, None, None, None
 
-        # 3. Revisión hacia adelante (Early Times)
         E_S = {}
         E_F = {}
         topo_order = list(nx.topological_sort(G))
@@ -83,7 +85,6 @@ def process_cpm_network(df):
             
         project_duration = max(E_F.values()) if E_F else 0
 
-        # 4. Revisión hacia atrás (Late Times)
         L_S = {}
         L_F = {}
         for node in reversed(topo_order):
@@ -94,7 +95,6 @@ def process_cpm_network(df):
                 L_F[node] = min([L_S[s] for s in succs])
             L_S[node] = L_F[node] - G.nodes[node]['weight']
 
-        # 5. Holgura y Ruta Crítica
         cpm_data = []
         cp_nodes = []
         total_variance = 0
@@ -127,7 +127,6 @@ def process_cpm_network(df):
     except Exception as e:
         return "ERROR", None, None, None, None, None, None
 
-# Ejecutar lógica
 resultado = process_cpm_network(edited_df)
 
 # --- 3. VISUALIZACIÓN ---
@@ -138,22 +137,18 @@ if isinstance(resultado, tuple) and len(resultado) == 7:
         st.error("⚠️ Ciclo detectado: Una actividad no puede depender de sí misma o crear un bucle infinito.")
     elif G is not None:
         
-        # --- TABLA DE RESULTADOS SOLICITADA ---
+        st.write("---")
         st.subheader("Tabla de Tiempos Esperados (PERT)")
-        # Formatear la tabla para que se vea como en tu imagen
         df_display = df_calc[['Actividad', 'Descripción', 'Predecesores', 'b', 'a', 'm', 't', 'sigma']].copy()
         df_display[['t', 'sigma']] = df_display[['t', 'sigma']].round(2)
         st.dataframe(df_display, use_container_width=True)
 
         st.header("2. Diagrama de Red (AON)")
-        
         dot = graphviz.Digraph(graph_attr={'rankdir': 'LR'})
         for node in G.nodes():
             es_critica = node in cp_nodes
             color = 'red' if es_critica else 'black'
             fill = '#ffcccc' if es_critica else 'lightcyan'
-            
-            # Etiqueta del nodo: Muestra la actividad y el tiempo
             label = f"{node}\n(t={G.nodes[node]['weight']:.1f})"
             dot.node(node, label=label, shape='box', style='filled', fillcolor=fill, color=color, penwidth='2.0' if es_critica else '1.0')
             
@@ -164,15 +159,23 @@ if isinstance(resultado, tuple) and len(resultado) == 7:
 
         st.graphviz_chart(dot)
 
-        # --- TABLA DE REVISIÓN ADELANTE / ATRÁS ---
-        if mostrar_pasos and df_cpm is not None:
-            st.subheader("📋 Detalles de Revisión (Adelante y Atrás)")
+        # --- TABLA DE REVISIÓN FILTRADA POR EL USUARIO ---
+        if df_cpm is not None:
+            st.subheader(f"📋 Detalles: {tipo_revision}")
+            
+            df_mostrar = df_cpm.copy()
+            
+            if tipo_revision == "Solo Revisión hacia Adelante (ES, EF)":
+                df_mostrar = df_mostrar[['Actividad', 'Duración (t)', 'ES', 'EF', 'Crítica']]
+            elif tipo_revision == "Solo Revisión hacia Atrás y Holgura (LS, LF)":
+                df_mostrar = df_mostrar[['Actividad', 'Duración (t)', 'LS', 'LF', 'Holgura', 'Crítica']]
+                
             def highlight_critical(val):
                 color = '#ffcccc' if val == 'Sí' else ''
                 return f'background-color: {color}'
-            st.dataframe(df_cpm.style.map(highlight_critical, subset=['Crítica']), use_container_width=True)
+                
+            st.dataframe(df_mostrar.style.map(highlight_critical, subset=['Crítica']), use_container_width=True)
 
-        # --- ANÁLISIS PROBABILÍSTICO ---
         st.header("3. Análisis y Reporte PDF")
         col1, col2 = st.columns(2)
         col1.metric("Duración Total Esperada (μ)", f"{project_mean:.2f} semanas")
