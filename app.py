@@ -17,22 +17,22 @@ st.markdown("Agrega tus actividades directamente en la tabla. La red y los cálc
 # --- 1. ENTRADA DE DATOS DIRECTA ---
 st.header("1. Ingreso de Actividades")
 
-# Creamos una tabla vacía con los encabezados listos
 df_inicial = pd.DataFrame(columns=[
     "Actividad", "De_Nodo", "A_Nodo", "Optimista_a", "MasProbable_m", "Pesimista_b"
 ])
 
-st.info("💡 Consejo: Haz clic en el botón '+' al final de la tabla para agregar una nueva actividad.")
+st.info("💡 Consejo: Haz clic en el botón '+' al final de la tabla para agregar una nueva actividad. Asegúrate de conectar los nodos de forma lógica (ej. 1->2, 2->3).")
 
-# El usuario interactúa directamente con esta tabla
 edited_df = st.data_editor(df_inicial, num_rows="dynamic", use_container_width=True)
+
+# Opciones adicionales para el usuario
+mostrar_pasos = st.checkbox("¿Mostrar detalles de revisión hacia adelante y hacia atrás (ES, EF, LS, LF, Holgura)?", value=True)
 
 # --- 2. CÁLCULOS ---
 def calculate_pert_times(df):
     results_df = df.copy()
     if results_df.empty: return results_df
     
-    # Convertir a números por si acaso
     for col in ['Optimista_a', 'MasProbable_m', 'Pesimista_b']:
         results_df[col] = pd.to_numeric(results_df[col], errors='coerce').fillna(0)
         
@@ -42,42 +42,89 @@ def calculate_pert_times(df):
 
 results_pert = calculate_pert_times(edited_df)
 
-def find_critical_path(df):
-    if df.empty: return None, None, None, None, None
+def find_critical_path_and_cpm_metrics(df):
+    if df.empty: return None, None, None, None, None, None
     G = nx.DiGraph()
     for index, row in df.iterrows():
-        # Validar que los nodos no estén vacíos antes de agregarlos
         if pd.notna(row['De_Nodo']) and pd.notna(row['A_Nodo']) and str(row['De_Nodo']).strip() != "" and str(row['A_Nodo']).strip() != "":
             G.add_edge(str(row['De_Nodo']), str(row['A_Nodo']), id=str(row['Actividad']), weight=row['te'])
 
     try:
-        cp_nodes = nx.dag_longest_path(G, weight='weight')
+        # Validar si hay ciclos
+        if not nx.is_directed_acyclic_graph(G):
+            return None, None, None, None, None, None
+
+        # 1. REVISIÓN HACIA ADELANTE (Early Times para los nodos)
+        E = {n: 0 for n in G.nodes()}
+        for u in nx.topological_sort(G):
+            for v in G.successors(u):
+                weight = G[u][v]['weight']
+                E[v] = max(E[v], E[u] + weight)
+
+        project_mean = max(E.values())
+
+        # 2. REVISIÓN HACIA ATRÁS (Late Times para los nodos)
+        L = {n: project_mean for n in G.nodes()}
+        for u in reversed(list(nx.topological_sort(G))):
+            for v in G.successors(u):
+                weight = G[u][v]['weight']
+                L[u] = min(L[u], L[v] - weight)
+
+        # 3. Calcular métricas por actividad (arco)
+        cpm_results = []
         total_variance = 0
         cp_act_ids = []
-        path_string_list = []
         
+        for u, v, data in G.edges(data=True):
+            act_id = data['id']
+            t = data['weight']
+            
+            es = E[u]            # Early Start
+            ef = es + t          # Early Finish
+            lf = L[v]            # Late Finish
+            ls = lf - t          # Late Start
+            holgura = ls - es    # Slack
+            
+            es_critica = abs(holgura) < 1e-6
+            
+            if es_critica:
+                cp_act_ids.append(act_id)
+                activity_var = df[df['Actividad'] == act_id]['variance'].values[0]
+                total_variance += activity_var
+                
+            cpm_results.append({
+                'Actividad': act_id,
+                'Duración (te)': round(t, 2),
+                'Inicio Temprano (ES)': round(es, 2),
+                'Fin Temprano (EF)': round(ef, 2),
+                'Inicio Tardío (LS)': round(ls, 2),
+                'Fin Tardío (LF)': round(lf, 2),
+                'Holgura': round(holgura, 2),
+                'Crítica': 'Sí' if es_critica else 'No'
+            })
+            
+        df_cpm = pd.DataFrame(cpm_results)
+        
+        # Formatear el string de la ruta crítica
+        cp_nodes = nx.dag_longest_path(G, weight='weight')
+        path_string_list = []
         for i in range(len(cp_nodes) - 1):
             u, v = cp_nodes[i], cp_nodes[i+1]
-            edge_data = G.get_edge_data(u, v)
-            act_id = edge_data['id']
-            cp_act_ids.append(act_id)
-            
-            activity_var = df[df['Actividad'] == act_id]['variance'].values[0]
-            total_variance += activity_var
+            act_id = G.get_edge_data(u, v)['id']
             path_string_list.append(f"{u} -> {act_id} -> {v}")
+            
+        path_str = " | ".join(path_string_list)
 
-        project_mean = nx.dag_longest_path_length(G, weight='weight')
-        return cp_nodes, cp_act_ids, project_mean, np.sqrt(total_variance), " | ".join(path_string_list)
-    except:
-        return None, None, None, None, None
+        return cp_nodes, cp_act_ids, project_mean, np.sqrt(total_variance), path_str, df_cpm
+    except Exception as e:
+        return None, None, None, None, None, None
 
-cp_nodes, cp_act_ids, project_mean, project_sd, path_str = find_critical_path(results_pert)
+cp_nodes, cp_act_ids, project_mean, project_sd, path_str, df_cpm = find_critical_path_and_cpm_metrics(results_pert)
 
 # --- 3. VISUALIZACIÓN Y RESULTADOS ---
 if cp_nodes and not results_pert.empty:
     st.header("2. Visualización de la Red")
     
-    # Dibujar la red instantáneamente (sin animaciones)
     dot = graphviz.Digraph(graph_attr={'rankdir': 'LR'})
     
     for index, row in results_pert.iterrows():
@@ -95,6 +142,22 @@ if cp_nodes and not results_pert.empty:
 
     st.graphviz_chart(dot)
 
+    # --- TABLA DE REVISIÓN ADELANTE / ATRÁS ---
+    if mostrar_pasos and df_cpm is not None:
+        st.subheader("📋 Detalles de Revisión (Adelante y Atrás)")
+        st.markdown("""
+        * **ES (Early Start):** Inicio más cercano | **EF (Early Finish):** Fin más cercano
+        * **LS (Late Start):** Inicio más lejano | **LF (Late Finish):** Fin más lejano
+        * **Holgura (Slack):** Margen de retraso permitido ($LS - ES$)
+        """)
+        
+        # Resaltar filas críticas en la tabla de Streamlit
+        def highlight_critical(val):
+            color = '#ffcccc' if val == 'Sí' else ''
+            return f'background-color: {color}'
+            
+        st.dataframe(df_cpm.style.map(highlight_critical, subset=['Crítica']), use_container_width=True)
+
     st.header("3. Análisis Probabilístico y Reporte PDF")
     col1, col2 = st.columns(2)
     col1.metric("Duración Total Esperada (μ)", f"{project_mean:.2f}")
@@ -108,7 +171,6 @@ if cp_nodes and not results_pert.empty:
 
     def create_plot():
         fig, ax = plt.subplots(figsize=(8, 4))
-        # Validar si la desviación estándar es 0 para evitar errores en la gráfica
         sd_plot = project_sd if project_sd > 0 else 0.01 
         
         x = np.linspace(project_mean - 4*sd_plot, project_mean + 4*sd_plot, 200)
@@ -144,3 +206,6 @@ if cp_nodes and not results_pert.empty:
     if st.button("Generar y Descargar Reporte PDF"):
         pdf_bytes = generate_pdf()
         st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_Proyecto.pdf", mime="application/pdf")
+        
+elif not results_pert.empty:
+    st.error("⚠️ La red no se puede procesar. Revisa que los nodos estén conectados lógicamente y que no haya ciclos infinitos.")
