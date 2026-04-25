@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 from scipy.stats import norm
@@ -8,30 +8,58 @@ from fpdf import FPDF
 import graphviz
 import tempfile
 import os
+import time  # <-- Importante para la animación
 
 st.set_page_config(layout="wide", page_title="Generador PERT/CPM")
 
-st.title("Calculadora PERT/CPM con Reporte PDF")
-st.markdown("Ingresa los tiempos optimista, más probable y pesimista. La app calculará la ruta crítica y generará un reporte descargable.")
+st.title("Calculadora PERT/CPM Animada y Reporte PDF")
 
-# --- ENTRADA DE DATOS MANUALES ---
+# --- 1. ENTRADA DE DATOS (FORMULARIO Y TABLA) ---
 st.header("1. Ingreso de Actividades (PERT)")
-default_activities = [
-    {"Actividad": "A", "De_Nodo": "Inicio", "A_Nodo": "Central", "Optimista_a": 3.0, "MasProbable_m": 4.16, "Pesimista_b": 6.0},
-    {"Actividad": "B", "De_Nodo": "Central", "A_Nodo": "Superior", "Optimista_a": 2.0, "MasProbable_m": 2.3, "Pesimista_b": 3.0},
-    {"Actividad": "C", "De_Nodo": "Central", "A_Nodo": "Abajo_Izq", "Optimista_a": 3.0, "MasProbable_m": 3.5, "Pesimista_b": 5.0},
-    {"Actividad": "D", "De_Nodo": "Central", "A_Nodo": "Final", "Optimista_a": 1.0, "MasProbable_m": 1.25, "Pesimista_b": 2.0},
-    {"Actividad": "E", "De_Nodo": "Superior", "A_Nodo": "Final", "Optimista_a": 5.0, "MasProbable_m": 5.66, "Pesimista_b": 7.0},
-    {"Actividad": "Ficticia", "De_Nodo": "Abajo_Izq", "A_Nodo": "Superior", "Optimista_a": 0.0, "MasProbable_m": 0.0, "Pesimista_b": 0.0},
-]
 
-df_input = pd.DataFrame(default_activities)
-edited_df = st.data_editor(df_input, num_rows="dynamic")
+# Crear una "memoria" para guardar las actividades si aún no existe
+if 'df_datos' not in st.session_state:
+    st.session_state.df_datos = pd.DataFrame(columns=[
+        "Actividad", "De_Nodo", "A_Nodo", "Optimista_a", "MasProbable_m", "Pesimista_b"
+    ])
 
-# --- CÁLCULOS PERT ---
+# Formulario interactivo para agregar actividades paso a paso
+with st.expander("➕ Haz clic aquí para agregar una actividad en el formulario", expanded=True):
+    with st.form("form_actividad", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        act = col1.text_input("Nombre de Actividad (ej. A)")
+        de_nodo = col2.text_input("De Nodo (ej. Inicio)")
+        a_nodo = col3.text_input("A Nodo (ej. Central)")
+        
+        col4, col5, col6 = st.columns(3)
+        opt = col4.number_input("T. Optimista (a)", min_value=0.0, step=0.1)
+        prob = col5.number_input("T. Más Probable (m)", min_value=0.0, step=0.1)
+        pes = col6.number_input("T. Pesimista (b)", min_value=0.0, step=0.1)
+        
+        # Al presionar el botón, se añade a nuestra "memoria"
+        if st.form_submit_button("Agregar a la lista"):
+            if act and de_nodo and a_nodo:
+                nueva_fila = pd.DataFrame([{
+                    "Actividad": act, "De_Nodo": de_nodo, "A_Nodo": a_nodo,
+                    "Optimista_a": opt, "MasProbable_m": prob, "Pesimista_b": pes
+                }])
+                st.session_state.df_datos = pd.concat([st.session_state.df_datos, nueva_fila], ignore_index=True)
+                st.rerun() # Recarga la página para mostrar los cambios
+            else:
+                st.warning("Por favor llena al menos el Nombre, De Nodo y A Nodo.")
+
+st.markdown("**Lista de actividades:** (Puedes editar los números o borrar filas seleccionando la casilla izquierda y presionando 'Supr')")
+# Mostrar la tabla permitiendo edición directa
+edited_df = st.data_editor(st.session_state.df_datos, num_rows="dynamic", use_container_width=True)
+
+# Sincronizar la tabla editada con nuestra memoria
+st.session_state.df_datos = edited_df
+
+# --- 2. CÁLCULOS PERT Y CPM ---
 def calculate_pert_times(df):
     results_df = df.copy()
-    # Asegurar que las columnas numéricas sean float
+    if results_df.empty: return results_df
+    
     cols_numericas = ['Optimista_a', 'MasProbable_m', 'Pesimista_b']
     for col in cols_numericas:
         results_df[col] = pd.to_numeric(results_df[col], errors='coerce').fillna(0)
@@ -42,8 +70,8 @@ def calculate_pert_times(df):
 
 results_pert = calculate_pert_times(edited_df)
 
-# --- CPM ---
 def find_critical_path(df):
+    if df.empty: return None, None, None, None, None
     G = nx.DiGraph()
     for index, row in df.iterrows():
         G.add_edge(row['De_Nodo'], row['A_Nodo'], id=row['Actividad'], weight=row['te'])
@@ -71,18 +99,21 @@ def find_critical_path(df):
 
 cp_nodes, cp_act_ids, project_mean, project_sd, path_str = find_critical_path(results_pert)
 
-if cp_nodes:
-    # --- VISUALIZACIÓN DE LA RED EN LA APP ---
+# --- 3. VISUALIZACIÓN ANIMADA Y RESULTADOS ---
+if cp_nodes and not results_pert.empty:
     st.header("2. Visualización de la Red")
     
-    # Usamos Graphviz para dibujar el diagrama
-    dot = graphviz.Digraph()
-    dot.attr(rankdir='LR') # De izquierda a derecha
+    # Botón para activar la animación
+    animar = st.button("▶️ Construir Red Paso a Paso (Animación)")
+    
+    # Espacio reservado en blanco donde se inyectará el gráfico
+    espacio_grafico = st.empty()
+    
+    dot = graphviz.Digraph(graph_attr={'rankdir': 'LR'})
     
     for index, row in results_pert.iterrows():
         actividad = row['Actividad']
         es_critica = actividad in cp_act_ids
-        
         color = 'red' if es_critica else 'black'
         penwidth = '2.0' if es_critica else '1.0'
         
@@ -91,14 +122,19 @@ if cp_nodes:
         
         etiqueta = f"{actividad}\nte={row['te']:.2f}"
         dot.edge(str(row['De_Nodo']), str(row['A_Nodo']), label=etiqueta, color=color, fontcolor=color, penwidth=penwidth)
+        
+        if animar:
+            # Dibuja el estado actual y hace una pausa
+            espacio_grafico.graphviz_chart(dot)
+            time.sleep(0.8) # Pausa de 0.8 segundos entre cada flecha
+            
+    # Asegurar que se dibuje completo al final o si no se presionó animar
+    espacio_grafico.graphviz_chart(dot)
 
-    st.graphviz_chart(dot)
-
-    # --- RESULTADOS Y GENERACIÓN DE PDF ---
     st.header("3. Análisis Probabilístico y Reporte")
     col1, col2 = st.columns(2)
-    col1.metric("Duración Total Esperada (µ)", f"{project_mean:.2f}")
-    col2.metric("Desviación Estándar (s)", f"{project_sd:.4f}")
+    col1.metric("Duración Total Esperada (μ)", f"{project_mean:.2f}")
+    col2.metric("Desviación Estándar (σ)", f"{project_sd:.4f}")
     st.markdown(f"**Ruta Crítica:** `{path_str}`")
 
     target_time = st.number_input("Tiempo Objetivo para finalizar el proyecto:", value=float(np.ceil(project_mean)), step=0.5)
@@ -106,7 +142,6 @@ if cp_nodes:
     z_score = (target_time - project_mean) / project_sd
     prob_le = norm.cdf(z_score) * 100
 
-    # Gráfico interno (no se muestra con st.pyplot)
     def create_plot():
         fig, ax = plt.subplots(figsize=(8, 4))
         x = np.linspace(project_mean - 4*project_sd, project_mean + 4*project_sd, 200)
@@ -118,7 +153,6 @@ if cp_nodes:
         ax.set_title("Distribución Normal del Proyecto")
         return fig
 
-    # Función PDF
     def generate_pdf():
         pdf = FPDF()
         pdf.add_page()
@@ -132,7 +166,6 @@ if cp_nodes:
         pdf.cell(190, 8, f"Probabilidad (T <= {target_time}): {prob_le:.2f}%", 0, 1)
         pdf.ln(5)
         
-        # Generar y guardar el gráfico temporalmente para el PDF
         fig = create_plot()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
             fig.savefig(tmpfile.name, format="png")
@@ -144,5 +177,7 @@ if cp_nodes:
     if st.button("Generar y Descargar Reporte PDF"):
         pdf_bytes = generate_pdf()
         st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_Proyecto.pdf", mime="application/pdf")
-else:
+elif not results_pert.empty:
     st.warning("La red tiene un ciclo o falta de conexión. Revisa los nodos.")
+else:
+    st.info("Agrega actividades en el formulario de arriba para comenzar.")
