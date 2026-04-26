@@ -50,7 +50,7 @@ Para ejecutar este proyecto en tu entorno local, asegúrate de tener **Python 3.
    ```bash
    git clone [https://github.com/emilianoruiz23/MetodoRutaCriticaCPM.git](https://github.com/emilianoruiz23/MetodoRutaCriticaCPM.git)
    ## cd Time-Scaled-Network-Logic 
-   &
+   ##&
    ## cd app.py 
 
 ## 📌 Créditos
