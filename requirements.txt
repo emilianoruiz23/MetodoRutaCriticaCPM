@@ -6,3 +6,4 @@ networkx
 matplotlib
 fpdf
 graphviz
+plotly.graph_objects

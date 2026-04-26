@@ -1,0 +1,14 @@
+.aux
+.fdb_latexmk
+.fls
+.log
+.synctex.gz
+.toc
+.build
+.out
+.auxlock
+.build-tikz
+.DS_Store
+.Thumbs.db
+.venv/
+venv/

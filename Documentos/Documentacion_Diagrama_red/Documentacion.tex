@@ -1,0 +1,167 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage{booktabs}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish, es-tabla]{babel}
+\usepackage{amsmath, amsfonts, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage[left=2.54cm, right=2.54cm, top=2.54cm, bottom=2.54cm]{geometry}
+\usepackage{tikz}
+\usepackage{soul}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{float}
+\tcbset{shield externalize}
+\usetikzlibrary{arrows.meta, positioning, automata}
+\usetikzlibrary{babel}
+\usepackage{hyperref}
+
+%--------------------------------------------------------------------------------
+
+% Bloque de Ejercicio
+\newtcbtheorem[number within=section]{ejercicio}{Ejercicio}{
+    enhanced,
+    sharp corners,
+    boxrule=0pt,
+    leftrule=5pt,
+    colframe=gray!30!black,
+    colback=gray!5!white,
+    coltitle=white,
+    fonttitle=\bfseries,
+    separator sign={.\ },
+    before skip=10pt,
+    after skip=10pt
+}{ej}
+
+% Bloque de Teoremas
+\newtcbtheorem[number within=section]{mytheo}{Teorema}{
+    enhanced,
+    sharp corners,
+    boxrule=0pt,
+    leftrule=5pt,
+    colframe=blue!40!black,
+    colback=blue!5!white,
+    coltitle=white,
+    fonttitle=\bfseries,
+    separator sign={.\ },
+    before skip=10pt,
+    after skip=10pt
+}{th}
+
+ % Bloque de Alerta
+\newtcolorbox{alerta}[1]{
+    enhanced,
+    sharp corners,
+    boxrule=0pt,
+    leftrule=5pt,
+    colframe=red!40!black,
+    colback=red!5!white,
+    coltitle=white,
+    fonttitle=\bfseries,
+    title=#1,
+    before skip=10pt,
+    after skip=10pt
+}
+
+% Bloque de Notas
+\newtcolorbox{nota}[1]{
+    enhanced,
+    sharp corners,
+    boxrule=0pt,
+    leftrule=5pt,
+    colframe=orange!40!black,
+    colback=yellow!5!white,
+    coltitle=white,
+    fonttitle=\bfseries,
+    title=#1,
+    before skip=10pt,
+    after skip=10pt
+}
+
+% ---------------------------------------------------------------------------------------------
+\begin{document}
+
+\begin{titlepage}
+    \centering
+    {\huge \textbf{Universidad Nacional Autónoma de México}}\\[0.3cm]
+    \rule{\linewidth}{2mm}\\[0.3cm]
+    {\large \textbf{Facultad de Estudios Superiores Acatlán}}\\[1cm]
+    
+
+    \includegraphics[width=6cm]{../../Archivos/Imagenes-Logo/acatlan.png}\\[1cm]
+    
+    {\Large \textbf{Matemáticas Aplicadas y Computación}}\\[1cm]
+    {\huge \textit{Optimización II}}\\[0.5cm]
+    \rule{\linewidth}{0.3mm}\\[0.3cm]
+    {\Large \textit{Diagrama de Red a Escala de Tiempo}}\\[0.3cm]
+    \rule{\linewidth}{0.3mm}\\[0.3cm]
+    
+    \vfill
+    
+    \rule{\linewidth}{0.5mm}\\[0.3cm]
+    %{\Large \textit{Ricardo López Ramírez}}\\
+    \rule{\linewidth}{0.5mm}\\[0.8cm]
+    
+ \small
+    Actualización: \today \hfill Página: \thepage
+\end{titlepage}
+
+% ÍNDICE 
+\pagenumbering{roman}
+\tableofcontents
+\cleardoublepage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+% CONTENIDO 
+\section{Time-Scaled Network Logic}
+
+\subsection{Interfaz de Entrada de Datos Streamlit}
+
+\textbf{El programa transforma una tabla relacional en un grafo.}
+
+\begin{itemize}
+    \item Interfaz: Utiliza la librería Streamlit $(st.data_editor)$ para capturar tres variables esenciales por cada tarea: Nombre, Duración $(t)$ y Predecesores.
+    \item Estructura: Los datos se almacenan dinámicamente en un DataFrame de Pandas. 
+    En esta fase se realiza una limpieza básica (asegurar que t sea numérico y separar los predecesores por comas).
+\end{itemize}
+
+\subsection{Motor Lógico del CPM}
+\begin{itemize}
+    \item Utiliza la librería NetworkX para resolver el modelo matemático a través de Teoría de Grafos.
+    \item Validación de Grafo: Convierte las tareas en nodos y las dependencias en aristas dirigidas. 
+    primero, valida que sea un grafo dirigido acíclico DAG.Si detecta un bucle, el programa se detiene para evitar ciclos infinitos.
+    \item Ordenamiento Topológico: Ordena las tareas de tal forma que ninguna tarea se evalúe antes que sus predecesoras.
+    \item Pase hacia Adelante: Calcula el Inicio Temprano (ES) y el Fin Temprano (EF). La regla es: EF = ES + t. El ES de una tarea es el máximo EF de todos sus predecesores.
+    \item Pase hacia Atrás: Recorre el grafo en reversa desde la duración total del proyecto para calcular el Inicio Tardío (LS) y el Fin Tardío (LF).
+    \item Ruta Crítica: Calcula la Holgura (LS - ES). Si la holgura es exactamente 0, etiqueta la tarea como "Crítica" (verdadero/falso).
+\end{itemize}
+
+\subsection{Algoritmo de "Carriles"-Distribución Espacial Y}
+
+Para pasar de datos abstractos a un dibujo donde las tareas no se encimen, el programa ejecuta un algoritmo de asignación de espacios.
+
+\begin{itemize}
+    \item Ordenamiento temporal: Ordena las tareas de menor a mayor ES.
+    \item Asignación de Coordenada Y: El programa revisa un "carril" (nivel Y). Si el carril está vacío en el tiempo ES de la tarea actual, la coloca ahí. Si ya hay una tarea ocupando ese tiempo, baja al siguiente carril, y así sucesivamente.
+    \item Objetivo: Esto garantiza que las líneas de las tareas que ocurren en paralelo nunca colisionen visualmente. A cada tarea se le asigna un valor Y (ej. Y=1, Y=2...).
+\end{itemize}
+
+\subsection{Renderizado Cartesiano - Visualización Plotly}
+
+\begin{itemize}
+    \item Las Actividades (Líneas Sólidas):
+    \item Traza una línea recta entre ambos puntos. Por pura geometría, la longitud de esta línea es exactamente t.
+    Aplica formato condicional: Rojo si la tarea es Crítica (Holgura = 0), Azul si no lo es.
+    \item Las Dependencias (Líneas Punteadas Grises):
+    \item Para conectar una tarea terminada con su sucesora respetando la regla de ortogonalidad (sin diagonales)
+    1. Sale del final del predecesor: (EF del predecesor, Y del predecesor).
+    2. Baja o sube verticalmente hasta el carril de la nueva tarea: (EF del predecesor, Y del sucesor).
+    3. Avanza horizontalmente hasta donde inicia la nueva tarea: (ES del sucesor, Y del sucesor).
+    \item La Holgura Libre (Líneas Punteadas de Color):
+    \item Si una tarea no es crítica (Holgura > 0), 
+    traza una línea punteada desde su fin temprano (EF, Y) hasta su límite máximo permitido (LF, Y). 
+    Esto ilustra visualmente el tiempo que tiene esa tarea antes de retrasar todo el proyecto.
+\end{itemize}
+
+\end{document}
