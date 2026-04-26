@@ -138,7 +138,7 @@ def plot_time_scaled_network(df_cpm):
 
     # B) Dibujar Actividades
     for idx, row in df_cpm.iterrows():
-        color = 'red' if row['Critica'] else '#1f77b4' # Rojo para ruta crítica, Azul para el resto
+        color = 'red' if row['Critica'] else '#1f77b4'
         
         fig.add_trace(go.Scatter(
             x=[row['ES'], row['EF']], y=[row['Y'], row['Y']],
@@ -212,10 +212,10 @@ if st.button("Generar Diagrama a Escala de Tiempo"):
         st.subheader("Tabla de Resultados CPM")
         df_mostrar = df_cpm[['Actividad', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura', 'Critica']]
         
-        # Redondeo estético para la tabla
+        
         df_mostrar = df_mostrar.round(2)
         
-        # Se usa map() (nueva sintaxis de pandas) o applymap() dependiendo de la versión
+        
         try:
             st.dataframe(df_mostrar.style.map(lambda x: 'background-color: #ffcccc' if x else '', subset=['Critica']), use_container_width=True)
         except AttributeError:
