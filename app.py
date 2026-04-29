@@ -9,278 +9,161 @@ import graphviz
 import tempfile
 import os
 
-st.set_page_config(layout="wide", page_title="Generador CPM/PERT Avanzado")
+st.set_page_config(layout="wide", page_title="CPM Avanzado - Etiquetas en Aristas")
 
-st.title("Calculadora PERT/CPM: Nodos Circulares, Costos y Matemáticas")
-st.markdown("Ingresa tus actividades. Marca la casilla **Ficticia** para nodos que solo representan dependencias lógicas (t=0, Costo=0).")
+st.title("Calculadora CPM/PERT: Modelo de Actividad en la Arista (AOA)")
+st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado de costos y tiempos.")
 
 # --- 1. ENTRADA DE DATOS ---
-st.header("1. Ingreso de Actividades y Costos")
+st.header("1. Configuración de Actividades")
 
 default_data = [
-    {"Actividad": "A", "Descripción": "Cimientos", "Predecesores": "", "b": 6.0, "a": 3.0, "m": 4.0, "Costo": 5000.0, "Ficticia": False},
-    {"Actividad": "B", "Descripción": "Plomería", "Predecesores": "A", "b": 5.0, "a": 1.0, "m": 2.0, "Costo": 3000.0, "Ficticia": False},
-    {"Actividad": "C", "Descripción": "Techo", "Predecesores": "A", "b": 7.0, "a": 2.0, "m": 3.0, "Costo": 4500.0, "Ficticia": False},
-    {"Actividad": "F1", "Descripción": "Dependencia Dummy", "Predecesores": "B", "b": 0.0, "a": 0.0, "m": 0.0, "Costo": 0.0, "Ficticia": True},
-    {"Actividad": "E", "Descripción": "Pintura", "Predecesores": "F1, C", "b": 10.0, "a": 4.0, "m": 5.0, "Costo": 2000.0, "Ficticia": False},
+    {"Actividad": "A", "Desde": "1", "Hasta": "2", "a": 3.0, "m": 4.17, "b": 6.0, "Costo": 5000.0, "Ficticia": False},
+    {"Actividad": "B", "Desde": "2", "Hasta": "3", "a": 2.0, "m": 2.33, "b": 3.0, "Costo": 3000.0, "Ficticia": False},
+    {"Actividad": "C", "Desde": "2", "Hasta": "4", "a": 3.0, "m": 3.5, "b": 5.0, "Costo": 4500.0, "Ficticia": False},
+    {"Actividad": "F1", "Desde": "3", "Hasta": "4", "a": 0.0, "m": 0.0, "b": 0.0, "Costo": 0.0, "Ficticia": True},
+    {"Actividad": "E", "Desde": "4", "Hasta": "5", "a": 5.0, "m": 5.67, "b": 7.0, "Costo": 2000.0, "Ficticia": False},
 ]
 
-df_inicial = pd.DataFrame(default_data)
-edited_df = st.data_editor(df_inicial, num_rows="dynamic", use_container_width=True)
+df_input = pd.DataFrame(default_data)
+edited_df = st.data_editor(df_input, num_rows="dynamic", use_container_width=True)
 
-# --- MENÚ LATERAL ---
-st.sidebar.header("Opciones de Visualización")
-tipo_grafica = st.sidebar.radio(
-    "¿Qué revisión mostrar en los arcos/nodos?",
-    options=["Completo (Todos los datos)", "Revisión Adelante (Sumas)", "Revisión Atrás (Restas)"]
-)
+# Opciones de visualización
+st.sidebar.header("Vista de Etiquetas")
+vista = st.sidebar.radio("Mostrar en flechas:", ["Completo", "Solo Adelante (Sumas)", "Solo Atrás (Restas)"])
 
-# --- 2. CÁLCULOS PERT Y CPM ---
-def process_cpm_network(df):
-    if df.empty: return None, None, None, None, None, None, None, None, None
+# --- 2. MOTOR DE CÁLCULO CPM ---
+def calculate_aoa_cpm(df):
+    if df.empty: return None
     
-    df_calc = df.copy()
+    df_c = df.copy()
+    for col in ['a', 'm', 'b', 'Costo']:
+        df_c[col] = pd.to_numeric(df_c[col], errors='coerce').fillna(0)
     
-    # Asegurar tipos numéricos y forzar a cero si es ficticia
-    for col in ['b', 'a', 'm', 'Costo']:
-        df_calc[col] = pd.to_numeric(df_calc[col], errors='coerce').fillna(0)
-    
-    df_calc.loc[df_calc['Ficticia'] == True, ['b', 'a', 'm', 'Costo']] = 0.0
-        
-    df_calc['t'] = (df_calc['a'] + 4 * df_calc['m'] + df_calc['b']) / 6
-    df_calc['variance'] = ((df_calc['b'] - df_calc['a']) / 6)**2
-    df_calc['sigma'] = np.sqrt(df_calc['variance'])
+    # PERT
+    df_c['te'] = (df_c['a'] + 4 * df_c['m'] + df_c['b']) / 6
+    df_c['var'] = ((df_c['b'] - df_c['a']) / 6)**2
     
     G = nx.DiGraph()
-    costo_total = 0.0
+    for _, r in df_c.iterrows():
+        G.add_edge(str(r['Desde']), str(r['Hasta']), 
+                   id=r['Actividad'], t=r['te'], cost=r['Costo'], dummy=r['Ficticia'], var=r['var'])
+
+    if not nx.is_directed_acyclic_graph(G): return "ERROR_CICLO"
+
+    # Forward Pass (Tiempos de Nodos)
+    E = {n: 0 for n in G.nodes()}
+    for u in nx.topological_sort(G):
+        for v in G.successors(u):
+            E[v] = max(E[v], E[u] + G[u][v]['t'])
     
-    # Crear Nodos
-    for index, row in df_calc.iterrows():
-        act = str(row['Actividad']).strip()
-        if act:
-            costo_act = row['Costo']
-            costo_total += costo_act
-            G.add_node(act, weight=row['t'], cost=costo_act, is_dummy=row['Ficticia'])
+    project_duration = max(E.values())
+    
+    # Backward Pass (Tiempos de Nodos)
+    L = {n: project_duration for n in G.nodes()}
+    for u in reversed(list(nx.topological_sort(G))):
+        for v in G.successors(u):
+            L[u] = min(L[u], L[v] - G[u][v]['t'])
             
-    # Crear Arcos
-    for index, row in df_calc.iterrows():
-        act = str(row['Actividad']).strip()
-        preds = str(row['Predecesores']).replace('-', '').split(',')
-        if act:
-            for p in preds:
-                p = p.strip()
-                if p and p in G.nodes:
-                    G.add_edge(p, act)
+    # Métricas por Arista
+    edges_results = []
+    total_var = 0
+    cp_edges = []
+    total_cost = 0
 
-    try:
-        if not nx.is_directed_acyclic_graph(G):
-            return "ERROR_CICLO", None, None, None, None, None, None, None, None
-
-        E_S = {}
-        E_F = {}
-        log_adelante = []
-        topo_order = list(nx.topological_sort(G))
+    for u, v, d in G.edges(data=True):
+        es = E[u]
+        ef = es + d['t']
+        lf = L[v]
+        ls = lf - d['t']
+        slack = ls - es
+        crit = abs(slack) < 0.01
         
-        # 1. REVISIÓN ADELANTE (SUMAS)
-        for node in topo_order:
-            t = G.nodes[node]['weight']
-            preds = list(G.predecessors(node))
-            if not preds:
-                E_S[node] = 0
-                log_adelante.append(f"Act {node}: Sin predecesores -> ES = 0. Se suma t({t:.2f}) -> EF = {t:.2f}")
-            else:
-                max_ef = max([E_F[p] for p in preds])
-                E_S[node] = max_ef
-                pred_str = ", ".join([f"{p}(EF={E_F[p]:.2f})" for p in preds])
-                log_adelante.append(f"Act {node}: Predecesores [{pred_str}]. Se toma el MAYOR -> ES = {max_ef:.2f}. Se suma t({t:.2f}) -> EF = {max_ef + t:.2f}")
-            E_F[node] = E_S[node] + t
+        total_cost += d['cost']
+        if crit and not d['dummy']:
+            total_var += d['var']
+            cp_edges.append(d['id'])
             
-        project_duration = max(E_F.values()) if E_F else 0
+        edges_results.append({
+            'ID': d['id'], 'Desde': u, 'Hasta': v, 't': round(d['t'], 2), 'cost': d['cost'],
+            'ES': round(es, 2), 'EF': round(ef, 2), 'LS': round(ls, 2), 'LF': round(lf, 2),
+            'Slack': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy']
+        })
 
-        # 2. REVISIÓN ATRÁS (RESTAS)
-        L_S = {}
-        L_F = {}
-        log_atras = []
-        for node in reversed(topo_order):
-            t = G.nodes[node]['weight']
-            succs = list(G.successors(node))
-            if not succs:
-                L_F[node] = project_duration
-                log_atras.append(f"Act {node}: Nodo final -> LF = {project_duration:.2f}. Se resta t({t:.2f}) -> LS = {project_duration - t:.2f}")
-            else:
-                min_ls = min([L_S[s] for s in succs])
-                L_F[node] = min_ls
-                succ_str = ", ".join([f"{s}(LS={L_S[s]:.2f})" for s in succs])
-                log_atras.append(f"Act {node}: Sucesores [{succ_str}]. Se toma el MENOR -> LF = {min_ls:.2f}. Se resta t({t:.2f}) -> LS = {min_ls - t:.2f}")
-            L_S[node] = L_F[node] - t
+    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_edges, total_cost
 
-        # 3. CONSOLIDAR RESULTADOS
-        cpm_data = []
-        cp_nodes = []
-        total_variance = 0
+res = calculate_aoa_cpm(edited_df)
+
+# --- 3. DESPLIEGE ---
+if isinstance(res, tuple):
+    G, df_res, duration, sd, cp_list, total_cost = res
+    
+    # --- RED VISUAL ---
+    st.header("2. Diagrama de Red (Etiquetado en Aristas)")
+    
+    dot = graphviz.Digraph(graph_attr={'rankdir': 'LR', 'nodesep': '0.5', 'ranksep': '1.0'})
+    
+    # Nodos pequeños
+    for n in G.nodes():
+        dot.node(n, shape='circle', width='0.3', height='0.3', label=n, fontsize='10', style='filled', fillcolor='white')
         
-        for node in topo_order:
-            slack = L_S[node] - E_S[node]
-            es_critica = abs(slack) < 1e-6
-            is_dummy = G.nodes[node]['is_dummy']
-            
-            if es_critica and not is_dummy:
-                cp_nodes.append(node)
-                activity_var = df_calc[df_calc['Actividad'] == node]['variance'].values[0]
-                total_variance += activity_var
-                
-            cpm_data.append({
-                'Actividad': node,
-                'Duración (t)': round(G.nodes[node]['weight'], 2),
-                'Costo ($)': round(G.nodes[node]['cost'], 2),
-                'ES': round(E_S[node], 2),
-                'EF': round(E_F[node], 2),
-                'LS': round(L_S[node], 2),
-                'LF': round(L_F[node], 2),
-                'Holgura': round(slack, 2),
-                'Crítica': 'Sí' if es_critica else 'No',
-                'Ficticia': 'Sí' if is_dummy else 'No'
-            })
-            
-        df_cpm = pd.DataFrame(cpm_data)
-        path_str = " -> ".join(cp_nodes)
+    # Aristas con etiquetas
+    for _, r in df_res.iterrows():
+        color = 'red' if r['Crit'] else 'black'
+        style = 'dashed' if r['Dummy'] else 'solid'
+        pen = '2.5' if r['Crit'] else '1.0'
         
-        return G, df_calc, cp_nodes, project_duration, np.sqrt(total_variance), path_str, df_cpm, log_adelante, log_atras, costo_total
+        # Construir etiqueta según vista
+        label_txt = f"{r['ID']}\nt={r['t']}\n${r['cost']}"
+        if vista == "Completo":
+            label_txt += f"\nES:{r['ES']} EF:{r['EF']}\nLS:{r['LS']} LF:{r['LF']}"
+        elif vista == "Solo Adelante (Sumas)":
+            label_txt += f"\nES:{r['ES']} EF:{r['EF']}"
+        else:
+            label_txt += f"\nLS:{r['LS']} LF:{r['LF']}"
 
-    except Exception as e:
-        return "ERROR", None, None, None, None, None, None, None, None, None
+        dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='9', fontcolor=color)
 
-# Ejecutar lógica
-resultado = process_cpm_network(edited_df)
+    st.graphviz_chart(dot)
 
-# --- 3. VISUALIZACIÓN ---
-if isinstance(resultado, tuple) and len(resultado) == 10:
-    G, df_calc, cp_nodes, project_mean, project_sd, path_str, df_cpm, log_adelante, log_atras, costo_total = resultado
+    # --- TABLA E INFO ---
+    st.header("3. Resultados y Reporte")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Duración (μ)", f"{duration:.2f}")
+    col2.metric("Costo Total", f"${total_cost:,.2f}")
+    col3.metric("Desviación (σ)", f"{sd:.4f}")
 
-    if G == "ERROR_CICLO":
-        st.error("⚠️ Ciclo detectado: Una red no puede tener bucles (ej. A depende de B, y B depende de A).")
-    elif G is not None:
+    st.dataframe(df_res.drop(columns=['Crit', 'Dummy']), use_container_width=True)
+
+    # PDF Logic
+    def generate_pdf():
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(190, 10, 'Reporte CPM - Etiquetado en Aristas', 0, 1, 'C')
+        pdf.set_font('Arial', '', 10)
+        pdf.ln(5)
+        pdf.cell(190, 7, f"Duracion Esperada: {duration:.2f}", 0, 1)
+        pdf.cell(190, 7, f"Costo Total: ${total_cost:,.2f}", 0, 1)
+        pdf.cell(190, 7, f"Ruta Critica: {', '.join(cp_list)}", 0, 1)
         
-        # --- MATEMÁTICAS EXPLÍCITAS ---
-        st.header("2. Desarrollo Matemático (Paso a Paso)")
-        col_ad, col_at = st.columns(2)
-        with col_ad:
-            st.subheader("Pase Adelante (Suma: ES + t = EF)")
-            for linea in log_adelante:
-                st.code(linea, language="text")
-        with col_at:
-            st.subheader("Pase Atrás (Resta: LF - t = LS)")
-            for linea in log_atras:
-                st.code(linea, language="text")
-
-        # --- DIAGRAMA DE RED CIRCULAR ---
-        st.header("3. Diagrama de Red (Nodos Circulares)")
+        # Gráfica Normal
+        fig, ax = plt.subplots(figsize=(6, 3))
+        x = np.linspace(duration-4*sd, duration+4*sd, 100)
+        ax.plot(x, norm.pdf(x, duration, sd))
+        ax.axvline(duration, color='green', linestyle='--')
+        ax.set_title("Distribucion Normal del Proyecto")
         
-        dot = graphviz.Digraph(graph_attr={'rankdir': 'LR', 'splines': 'ortho'})
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            fig.savefig(tmp.name)
+            pdf.image(tmp.name, w=150)
+        os.unlink(tmp.name)
         
-        for node in G.nodes():
-            row = df_cpm[df_cpm['Actividad'] == node].iloc[0]
-            es_critica = row['Crítica'] == 'Sí'
-            is_dummy = row['Ficticia'] == 'Sí'
-            
-            color = 'red' if es_critica else 'black'
-            fill = '#ffcccc' if es_critica else 'white'
-            style = 'dashed,filled' if is_dummy else 'filled'
-            
-            # Construcción de la etiqueta según el menú lateral
-            label_parts = [f"Act: {node}", f"t={row['Duración (t)']}", f"${row['Costo ($)']}"]
-            
-            if tipo_grafica in ["Completo (Todos los datos)", "Revisión Adelante (Sumas)"]:
-                label_parts.append(f"ES:{row['ES']} | EF:{row['EF']}")
-            if tipo_grafica in ["Completo (Todos los datos)", "Revisión Atrás (Restas)"]:
-                label_parts.append(f"LS:{row['LS']} | LF:{row['LF']}")
-                
-            label = "\n".join(label_parts)
-            
-            # Nodos explícitamente CIRCULARES
-            dot.node(node, label=label, shape='circle', style=style, fillcolor=fill, color=color, penwidth='2.0' if es_critica else '1.0')
-            
-        for u, v in G.edges():
-            is_u_crit = df_cpm[df_cpm['Actividad'] == u].iloc[0]['Crítica'] == 'Sí'
-            is_v_crit = df_cpm[df_cpm['Actividad'] == v].iloc[0]['Crítica'] == 'Sí'
-            is_dummy = G.nodes[v]['is_dummy'] or G.nodes[u]['is_dummy']
-            
-            color = 'red' if (is_u_crit and is_v_crit) else 'gray'
-            style = 'dashed' if is_dummy else 'solid'
-            
-            # En el arco ponemos el símbolo + o - si el usuario lo pide
-            edge_label = ""
-            if tipo_grafica == "Revisión Adelante (Sumas)": edge_label = "+ suma"
-            elif tipo_grafica == "Revisión Atrás (Restas)": edge_label = "- resta"
-            
-            dot.edge(u, v, label=edge_label, color=color, style=style, penwidth='2.0' if (is_u_crit and is_v_crit) else '1.0', fontcolor='gray')
+        return pdf.output(dest='S').encode('latin1')
 
-        st.graphviz_chart(dot)
+    if st.button("Descargar Reporte PDF"):
+        pdf_bytes = generate_pdf()
+        st.download_button("Descargar PDF", pdf_bytes, "Reporte_CPM_Aristas.pdf", "application/pdf")
 
-        # --- TABLA Y RESULTADOS ---
-        st.header("4. Análisis Probabilístico y Financiero")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Duración Total Esperada (μ)", f"{project_mean:.2f}")
-        col2.metric("Costo Total del Proyecto", f"${costo_total:,.2f}")
-        col3.metric("Desviación Estándar (σ)", f"{project_sd:.4f}")
-        st.markdown(f"**Ruta Crítica:** `{path_str}`")
-
-        target_time = st.number_input("Tiempo Objetivo para finalizar:", value=float(np.ceil(project_mean)), step=0.5)
-        z_score = (target_time - project_mean) / project_sd if project_sd > 0 else 0
-        prob_le = norm.cdf(z_score) * 100
-
-        def create_plot():
-            fig, ax = plt.subplots(figsize=(8, 4))
-            sd_plot = project_sd if project_sd > 0 else 0.01 
-            x = np.linspace(project_mean - 4*sd_plot, project_mean + 4*sd_plot, 200)
-            ax.plot(x, norm.pdf(x, project_mean, sd_plot), 'b-')
-            x_fill = np.linspace(project_mean - 4*sd_plot, target_time, 200)
-            ax.fill_between(x_fill, norm.pdf(x_fill, project_mean, sd_plot), color='lightblue', alpha=0.5)
-            ax.axvline(x=project_mean, color='green', linestyle='--')
-            ax.axvline(x=target_time, color='red', linestyle='-')
-            ax.set_title("Distribución Normal del Proyecto")
-            return fig
-
-        def generate_pdf():
-            pdf = FPDF()
-            pdf.add_page()
-            
-            # Título y Métricas
-            pdf.set_font('Arial', 'B', 16)
-            pdf.cell(190, 10, 'Reporte PERT/CPM (Nodos Circulares y Costos)', 0, 1, 'C')
-            pdf.ln(5)
-            pdf.set_font('Arial', '', 12)
-            pdf.cell(190, 8, f"Duracion Esperada: {project_mean:.2f}", 0, 1)
-            pdf.cell(190, 8, f"Costo Total: ${costo_total:,.2f}", 0, 1)
-            pdf.cell(190, 8, f"Ruta Critica: {path_str}", 0, 1)
-            pdf.cell(190, 8, f"Probabilidad (T <= {target_time}): {prob_le:.2f}%", 0, 1)
-            pdf.ln(5)
-            
-            # Log de Matemáticas (Suma/Resta)
-            pdf.set_font('Arial', 'B', 10)
-            pdf.cell(190, 6, "Calculo Paso a Paso (Adelante / Sumas):", 0, 1)
-            pdf.set_font('Arial', '', 9)
-            for linea in log_adelante:
-                pdf.cell(190, 5, linea, 0, 1)
-            
-            pdf.ln(3)
-            pdf.set_font('Arial', 'B', 10)
-            pdf.cell(190, 6, "Calculo Paso a Paso (Atras / Restas):", 0, 1)
-            pdf.set_font('Arial', '', 9)
-            for linea in log_atras:
-                pdf.cell(190, 5, linea, 0, 1)
-                
-            pdf.ln(5)
-            
-            # Gráfica
-            fig = create_plot()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                fig.savefig(tmpfile.name, format="png")
-                pdf.image(tmpfile.name, w=170)
-            os.unlink(tmpfile.name)
-            
-            return pdf.output(dest='S').encode('latin1')
-
-        if st.button("Generar y Descargar Reporte PDF Completo"):
-            pdf_bytes = generate_pdf()
-            st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_CPM_Completo.pdf", mime="application/pdf")
+elif res == "ERROR_CICLO":
+    st.error("Error: Se detectó un ciclo infinito en la red.")
