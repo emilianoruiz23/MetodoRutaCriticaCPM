@@ -37,14 +37,13 @@ El flujo de trabajo se divide en cuatro fases lógicas:
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## Vista streamlit.app
-
+PERT/CPM — Red a Escala de Tiempo
+https://metodorutacriticacpm-i9fge5idd8bxevnvpfjzpe.streamlit.app/
+Calculadora CPM/PERT
 https://metodorutacriticacpm-bpukhuhwepprtscz2amnrm.streamlit.app/
-
-https://metodorutacriticacpm-klh4sxvxxd4rvc8pzdwclh.streamlit.app/
 
 
 ## Instalación y Uso
-
 Para ejecutar este proyecto en tu entorno local, asegúrate de tener **Python 3.8+** instalado y sigue estos pasos:
 
 1. **Clona el repositorio:**
