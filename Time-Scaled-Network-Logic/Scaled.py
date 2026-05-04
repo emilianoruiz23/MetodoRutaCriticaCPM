@@ -238,23 +238,27 @@ def process_pert(df: pd.DataFrame):
     df_result = pd.DataFrame(rows)
     return df_result, project_duration, critical_paths, sigma_proj, var_project
 
-# Algoritmo
+    # Algoritmo
 def assign_lanes(df_cpm: pd.DataFrame) -> pd.DataFrame:
     df_sorted = df_cpm.sort_values(["ES", "tₑ"], ascending=[True, False])
     lanes     = []
     y_coords  = {}
 
     for _, row in df_sorted.iterrows():
-        es, ef = row["ES"], row["EF"]
+        es = row["ES"]
+        # CAMBIO CLAVE: Usamos LF en lugar de EF para evaluar cuándo se libera el carril.
+        # Esto reserva el espacio visual para que la holgura no se encime.
+        lf = row["LF"] 
+        
         assigned = -1
         for i, free_at in enumerate(lanes):
             if free_at <= es + 1e-6:
                 assigned  = i
-                lanes[i]  = ef
+                lanes[i]  = lf  # Reservamos el carril hasta el LF
                 break
         if assigned == -1:
             assigned = len(lanes)
-            lanes.append(ef)
+            lanes.append(lf)
         y_coords[row["Actividad"]] = assigned
 
     max_y = len(lanes) - 1 if lanes else 0
