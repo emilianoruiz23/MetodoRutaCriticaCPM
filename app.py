@@ -10,7 +10,7 @@ import os
 st.set_page_config(layout="wide", page_title="CPM Avanzado - Etiquetas en Aristas")
 
 st.title("Calculadora CPM/PERT: Modelo de Actividad en la Arista (AOA)")
-st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado de costos, tiempos y holguras.")
+st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado de costos, tiempos y holguras. Las actividades críticas se resaltarán automáticamente.")
 
 # --- 1. ENTRADA DE DATOS ---
 st.header("1. Configuración de Actividades")
@@ -67,17 +67,15 @@ def calculate_aoa_cpm(df):
     edges_results = []
     total_var = 0
     cp_edges = []
-    total_cost = 0
-
+    
     for u, v, d in G.edges(data=True):
         es = E[u]
         ef = es + d['t']
         lf = L[v]
         ls = lf - d['t']
         slack = ls - es
-        crit = abs(slack) < 0.01
+        crit = abs(slack) < 0.01 # Tolerancia para decimales
         
-        total_cost += d['cost']
         if crit and not d['dummy']:
             total_var += d['var']
             cp_edges.append(d['id'])
@@ -88,13 +86,13 @@ def calculate_aoa_cpm(df):
             'Holgura': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy']
         })
 
-    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_edges, total_cost
+    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_edges
 
 res = calculate_aoa_cpm(edited_df)
 
 # --- 3. DESPLIEGUE ---
 if isinstance(res, tuple):
-    G, df_res, duration, sd, cp_list, total_cost = res
+    G, df_res, duration, sd, cp_list = res
     
     # --- RED VISUAL ---
     st.header(f"2. Diagrama de Red ({vista})")
@@ -111,13 +109,13 @@ if isinstance(res, tuple):
         style = 'dashed' if r['Dummy'] else 'solid'
         pen = '2.5' if r['Crit'] else '1.0'
         
-        # Estructura del etiquetado visual
-        label_txt = f"{r['Actividad']}\nt={r['t']} | ${r['Costo']}"
+        # Etiquetado pulido y estructurado
+        label_txt = f"[{r['Actividad']}]\nt = {r['t']}  |  $ {r['Costo']}\n"
         
         if vista == "Solo Adelante (Sumas)":
-            label_txt += f"\nES: {r['ES']} -> EF: {r['EF']}"
+            label_txt += f"ES: {r['ES']}  →  EF: {r['EF']}"
         else:
-            label_txt += f"\nLS: {r['LS']} -> LF: {r['LF']}\nHolgura: {r['Holgura']}"
+            label_txt += f"LS: {r['LS']}  →  LF: {r['LF']}\nHolgura = {r['Holgura']}"
 
         dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='10', fontcolor=color)
 
@@ -129,9 +127,18 @@ if isinstance(res, tuple):
     col1.metric("Duración Esperada (μ)", f"{duration:.2f} unidades")
     col2.metric("Desviación (σ)", f"{sd:.4f}")
 
-    # Tabla final limpia (sin costo, variables dummy ni banderas lógicas)
+    # Seleccionar columnas a mostrar (sin las banderas lógicas)
     columnas_mostrar = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
-    st.dataframe(df_res[columnas_mostrar], use_container_width=True)
+    df_mostrar = df_res[columnas_mostrar]
+
+    # Función para resaltar renglones enteros si la holgura es cero
+    def highlight_critical_rows(row):
+        # Usamos abs < 0.01 para evitar problemas con los decimales flotantes de Python
+        color = '#ffe6e6' if abs(row['Holgura']) < 0.01 else ''
+        return [f'background-color: {color}'] * len(row)
+
+    # Mostramos la tabla aplicando el estilo
+    st.dataframe(df_mostrar.style.apply(highlight_critical_rows, axis=1), use_container_width=True)
 
     # --- LÓGICA DEL PDF ROBUSTO ---
     def generate_pdf(grafico_dot):
@@ -143,7 +150,7 @@ if isinstance(res, tuple):
         pdf.cell(190, 10, 'Reporte Analitico CPM (Modelo AOA)', 0, 1, 'C')
         pdf.ln(5)
         
-        # Información Relevante (Más robusta)
+        # Información Relevante
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(190, 8, '1. Resumen Ejecutivo:', 0, 1)
         
@@ -168,7 +175,7 @@ if isinstance(res, tuple):
             
         pdf.ln(10)
         
-        # Renderizar la red en el PDF (Ajustando resolución)
+        # Renderizar la red en el PDF
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(190, 8, '3. Diagrama de Red Estructurado:', 0, 1)
         
@@ -177,7 +184,7 @@ if isinstance(res, tuple):
             tmp.write(png_data)
             tmp_path = tmp.name
         
-        # Insertar imagen ocupando la mayor parte del ancho posible
+        # Insertar imagen
         pdf.image(tmp_path, x=10, w=190)
         os.unlink(tmp_path)
         
