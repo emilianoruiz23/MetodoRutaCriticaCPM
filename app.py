@@ -10,7 +10,7 @@ import os
 st.set_page_config(layout="wide", page_title="CPM Avanzado - Etiquetas en Aristas")
 
 st.title("Calculadora CPM/PERT: Modelo de Actividad en la Arista (AOA)")
-st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado de costos, tiempos y holguras. Las actividades críticas se resaltarán automáticamente.")
+st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado. Las actividades críticas se resaltarán automáticamente.")
 
 # --- 1. ENTRADA DE DATOS ---
 st.header("1. Configuración de Actividades")
@@ -103,19 +103,18 @@ if isinstance(res, tuple):
     for n in G.nodes():
         dot.node(n, shape='circle', width='0.25', height='0.25', label=n, fontsize='11', style='filled', fillcolor='#f0f2f6')
         
-    # Aristas con etiquetas mejoradas
+    # Aristas con etiquetas lógicas (Omitiendo 't' si es hacia atrás)
     for _, r in df_res.iterrows():
         color = 'red' if r['Crit'] else 'black'
         style = 'dashed' if r['Dummy'] else 'solid'
         pen = '2.5' if r['Crit'] else '1.0'
         
-        # Etiquetado pulido y estructurado
-        label_txt = f"[{r['Actividad']}]\nt = {r['t']}  |  $ {r['Costo']}\n"
-        
+        # Lógica condicional para el texto de la etiqueta
         if vista == "Solo Adelante (Sumas)":
-            label_txt += f"ES: {r['ES']}  →  EF: {r['EF']}"
+            label_txt = f"[{r['Actividad']}]\nt = {r['t']}  |  $ {r['Costo']}\nES: {r['ES']}  →  EF: {r['EF']}"
         else:
-            label_txt += f"LS: {r['LS']}  →  LF: {r['LF']}\nHolgura = {r['Holgura']}"
+            # Aquí omitimos la "t" limpiando la vista hacia atrás
+            label_txt = f"[{r['Actividad']}]\n$ {r['Costo']}\nLS: {r['LS']}  →  LF: {r['LF']}\nHolgura = {r['Holgura']}"
 
         dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='10', fontcolor=color)
 
@@ -127,17 +126,15 @@ if isinstance(res, tuple):
     col1.metric("Duración Esperada (μ)", f"{duration:.2f} unidades")
     col2.metric("Desviación (σ)", f"{sd:.4f}")
 
-    # Seleccionar columnas a mostrar (sin las banderas lógicas)
+    # Seleccionar columnas a mostrar
     columnas_mostrar = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
     df_mostrar = df_res[columnas_mostrar]
 
-    # Función para resaltar renglones enteros si la holgura es cero
+    # Resaltar en rojo las filas críticas
     def highlight_critical_rows(row):
-        # Usamos abs < 0.01 para evitar problemas con los decimales flotantes de Python
         color = '#ffe6e6' if abs(row['Holgura']) < 0.01 else ''
         return [f'background-color: {color}'] * len(row)
 
-    # Mostramos la tabla aplicando el estilo
     st.dataframe(df_mostrar.style.apply(highlight_critical_rows, axis=1), use_container_width=True)
 
     # --- LÓGICA DEL PDF ROBUSTO ---
@@ -167,15 +164,16 @@ if isinstance(res, tuple):
         if vista == "Solo Adelante (Sumas)":
             pdf.multi_cell(190, 6, "   El diagrama adjunto muestra el pase hacia adelante (Forward Pass). "
                                    "Se detallan el Inicio Temprano (ES) y Fin Temprano (EF) de cada actividad. "
-                                   "Los costos se incluyen en los arcos como referencia.")
+                                   "Los costos y duraciones esperadas (t) se incluyen en los arcos.")
         else:
             pdf.multi_cell(190, 6, "   El diagrama adjunto muestra el pase hacia atras (Backward Pass). "
                                    "Se detallan el Inicio Tardio (LS), el Fin Tardio (LF) y se destaca "
-                                   "explicita la 'Holgura' de cada actividad. Las rutas en rojo representan holgura cero.")
+                                   "explicita la 'Holgura' de cada actividad, omitiendo los tiempos para mayor claridad. "
+                                   "Las rutas en rojo representan holgura cero.")
             
         pdf.ln(10)
         
-        # Renderizar la red en el PDF
+        # Renderizar la red en el PDF (capturando el dot exacto con/sin la 't')
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(190, 8, '3. Diagrama de Red Estructurado:', 0, 1)
         
