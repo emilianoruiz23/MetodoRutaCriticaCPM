@@ -10,7 +10,7 @@ import os
 st.set_page_config(layout="wide", page_title="CPM Avanzado - Etiquetas en Aristas")
 
 st.title("Calculadora CPM/PERT: Modelo de Actividad en la Arista (AOA)")
-st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado de costos y tiempos.")
+st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado de costos, tiempos y holguras.")
 
 # --- 1. ENTRADA DE DATOS ---
 st.header("1. Configuración de Actividades")
@@ -28,7 +28,7 @@ edited_df = st.data_editor(df_input, num_rows="dynamic", use_container_width=Tru
 
 # Opciones de visualización simplificadas
 st.sidebar.header("Vista de Etiquetas")
-vista = st.sidebar.radio("Mostrar en flechas:", ["Solo Adelante (Sumas)", "Solo Atrás (Restas)"])
+vista = st.sidebar.radio("Mostrar en diagrama:", ["Solo Adelante (Sumas)", "Solo Atrás (Restas y Holguras)"])
 
 # --- 2. MOTOR DE CÁLCULO CPM ---
 def calculate_aoa_cpm(df):
@@ -83,9 +83,9 @@ def calculate_aoa_cpm(df):
             cp_edges.append(d['id'])
             
         edges_results.append({
-            'ID': d['id'], 'Desde': u, 'Hasta': v, 't': round(d['t'], 2), 'cost': d['cost'],
+            'Actividad': d['id'], 'Desde': u, 'Hasta': v, 't': round(d['t'], 2), 'Costo': d['cost'],
             'ES': round(es, 2), 'EF': round(ef, 2), 'LS': round(ls, 2), 'LF': round(lf, 2),
-            'Slack': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy']
+            'Holgura': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy']
         })
 
     return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_edges, total_cost
@@ -97,71 +97,87 @@ if isinstance(res, tuple):
     G, df_res, duration, sd, cp_list, total_cost = res
     
     # --- RED VISUAL ---
-    st.header("2. Diagrama de Red (Etiquetado en Aristas)")
+    st.header(f"2. Diagrama de Red ({vista})")
     
-    dot = graphviz.Digraph(graph_attr={'rankdir': 'LR', 'nodesep': '0.5', 'ranksep': '1.0'})
+    dot = graphviz.Digraph(graph_attr={'rankdir': 'LR', 'nodesep': '0.6', 'ranksep': '1.2'})
     
     # Nodos pequeños
     for n in G.nodes():
-        dot.node(n, shape='circle', width='0.3', height='0.3', label=n, fontsize='10', style='filled', fillcolor='white')
+        dot.node(n, shape='circle', width='0.25', height='0.25', label=n, fontsize='11', style='filled', fillcolor='#f0f2f6')
         
-    # Aristas con etiquetas
+    # Aristas con etiquetas mejoradas
     for _, r in df_res.iterrows():
         color = 'red' if r['Crit'] else 'black'
         style = 'dashed' if r['Dummy'] else 'solid'
         pen = '2.5' if r['Crit'] else '1.0'
         
-        # Construir etiqueta según vista
-        label_txt = f"{r['ID']}\nt={r['t']}\n${r['cost']}"
+        # Estructura del etiquetado visual
+        label_txt = f"{r['Actividad']}\nt={r['t']} | ${r['Costo']}"
+        
         if vista == "Solo Adelante (Sumas)":
-            label_txt += f"\nES:{r['ES']} EF:{r['EF']}"
+            label_txt += f"\nES: {r['ES']} -> EF: {r['EF']}"
         else:
-            label_txt += f"\nLS:{r['LS']} LF:{r['LF']}"
+            label_txt += f"\nLS: {r['LS']} -> LF: {r['LF']}\nHolgura: {r['Holgura']}"
 
-        dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='9', fontcolor=color)
+        dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='10', fontcolor=color)
 
     st.graphviz_chart(dot)
 
     # --- TABLA E INFO ---
     st.header("3. Resultados y Reporte")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Duración (μ)", f"{duration:.2f}")
-    col2.metric("Costo Total", f"${total_cost:,.2f}")
-    col3.metric("Desviación (σ)", f"{sd:.4f}")
+    col1, col2 = st.columns(2)
+    col1.metric("Duración Esperada (μ)", f"{duration:.2f} unidades")
+    col2.metric("Desviación (σ)", f"{sd:.4f}")
 
-    st.dataframe(df_res.drop(columns=['Crit', 'Dummy']), use_container_width=True)
+    # Tabla final limpia (sin costo, variables dummy ni banderas lógicas)
+    columnas_mostrar = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
+    st.dataframe(df_res[columnas_mostrar], use_container_width=True)
 
-    # --- LÓGICA DEL PDF ---
+    # --- LÓGICA DEL PDF ROBUSTO ---
     def generate_pdf(grafico_dot):
         pdf = FPDF()
         pdf.add_page()
         
         # Encabezado
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(190, 10, 'Reporte CPM - Resumen y Red del Proyecto', 0, 1, 'C')
+        pdf.cell(190, 10, 'Reporte Analitico CPM (Modelo AOA)', 0, 1, 'C')
         pdf.ln(5)
         
-        # Información Relevante
+        # Información Relevante (Más robusta)
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, 'Métricas Clave del Proyecto:', 0, 1)
+        pdf.cell(190, 8, '1. Resumen Ejecutivo:', 0, 1)
+        
         pdf.set_font('Arial', '', 11)
-        pdf.cell(190, 7, f"- Duracion Esperada (Total): {duration:.2f} unidades de tiempo", 0, 1)
-        pdf.cell(190, 7, f"- Costo Estimado Total: ${total_cost:,.2f}", 0, 1)
-        pdf.cell(190, 7, f"- Ruta Critica Identificada: {', '.join(cp_list)}", 0, 1)
-        pdf.cell(190, 7, f"- Desviacion Estandar del Proyecto: {sd:.4f}", 0, 1)
+        pdf.cell(190, 6, f"   - Duracion Estimada del Proyecto: {duration:.2f} unidades", 0, 1)
+        pdf.cell(190, 6, f"   - Desviacion Estandar: {sd:.4f}", 0, 1)
+        pdf.cell(190, 6, f"   - Ruta Critica (Actividades sin holgura): {', '.join(cp_list)}", 0, 1)
+        pdf.ln(5)
+
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(190, 8, '2. Enfoque del Diagrama:', 0, 1)
+        pdf.set_font('Arial', '', 11)
+        
+        if vista == "Solo Adelante (Sumas)":
+            pdf.multi_cell(190, 6, "   El diagrama adjunto muestra el pase hacia adelante (Forward Pass). "
+                                   "Se detallan el Inicio Temprano (ES) y Fin Temprano (EF) de cada actividad. "
+                                   "Los costos se incluyen en los arcos como referencia.")
+        else:
+            pdf.multi_cell(190, 6, "   El diagrama adjunto muestra el pase hacia atras (Backward Pass). "
+                                   "Se detallan el Inicio Tardio (LS), el Fin Tardio (LF) y se destaca "
+                                   "explicita la 'Holgura' de cada actividad. Las rutas en rojo representan holgura cero.")
+            
         pdf.ln(10)
         
+        # Renderizar la red en el PDF (Ajustando resolución)
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, f'Diagrama de Red ({vista}):', 0, 1)
-        pdf.ln(2)
+        pdf.cell(190, 8, '3. Diagrama de Red Estructurado:', 0, 1)
         
-        # Renderizar la red en el PDF usando un archivo temporal
         png_data = grafico_dot.pipe(format='png')
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             tmp.write(png_data)
             tmp_path = tmp.name
         
-        # Insertar imagen (Ajustada al ancho de la hoja)
+        # Insertar imagen ocupando la mayor parte del ancho posible
         pdf.image(tmp_path, x=10, w=190)
         os.unlink(tmp_path)
         
@@ -169,7 +185,7 @@ if isinstance(res, tuple):
 
     if st.button("Generar y Descargar Reporte PDF"):
         pdf_bytes = generate_pdf(dot)
-        st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_Red_CPM.pdf", mime="application/pdf")
+        st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_Detallado_CPM.pdf", mime="application/pdf")
 
 elif res == "ERROR_CICLO":
-    st.error("Error: Se detectó un ciclo infinito en la red.")
+    st.error("Error: Se detectó un ciclo infinito en la red. Revisa los nodos 'Desde' y 'Hasta'.")
