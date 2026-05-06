@@ -83,16 +83,16 @@ def calculate_aoa_cpm(df):
         edges_results.append({
             'Actividad': d['id'], 'Desde': u, 'Hasta': v, 't': round(d['t'], 2), 'Costo': d['cost'],
             'ES': round(es, 2), 'EF': round(ef, 2), 'LS': round(ls, 2), 'LF': round(lf, 2),
-            'Holgura': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy']
+            'Holgura': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy'], 'Var': d['var']
         })
 
-    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_edges
+    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_edges, total_var
 
 res = calculate_aoa_cpm(edited_df)
 
 # --- 3. DESPLIEGUE ---
 if isinstance(res, tuple):
-    G, df_res, duration, sd, cp_list = res
+    G, df_res, duration, sd, cp_list, total_var = res
     
     # --- RED VISUAL ---
     st.header(f"2. Diagrama de Red ({vista})")
@@ -131,50 +131,60 @@ if isinstance(res, tuple):
 
     st.dataframe(df_mostrar.style.apply(highlight_critical_rows, axis=1), use_container_width=True)
 
-    # --- LÓGICA DEL PDF ROBUSTO CON FÓRMULAS ---
+    # --- LÓGICA DEL PDF ROBUSTO CON MEMORIA DE CÁLCULO ---
     def generate_pdf(grafico_dot):
         pdf = FPDF()
         pdf.add_page()
         
+        # Filtramos solo las actividades críticas reales para el reporte matemático
+        crit_df = df_res[(df_res['Crit'] == True) & (df_res['Dummy'] == False)]
+        
+        # Strings dinámicos con los datos actuales
+        suma_vars_str = " + ".join([f"{r['Var']:.2f}" for _, r in crit_df.iterrows()])
+        suma_tiempos_str = " + ".join([f"{r['t']:.2f}" for _, r in crit_df.iterrows()])
+        
         # Encabezado
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(190, 10, 'Reporte Analitico CPM/PERT (Modelo AOA)', 0, 1, 'C')
+        pdf.cell(190, 10, 'Memoria de Calculo CPM/PERT (Modelo AOA)', 0, 1, 'C')
         pdf.ln(5)
         
         # 1. Información Relevante
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '1. Resumen Ejecutivo:', 0, 1)
+        pdf.cell(190, 8, '1. Resumen de Resultados:', 0, 1)
         pdf.set_font('Arial', '', 11)
         pdf.cell(190, 6, f"   - Duracion Estimada del Proyecto: {duration:.2f} unidades", 0, 1)
         pdf.cell(190, 6, f"   - Desviacion Estandar: {sd:.4f}", 0, 1)
-        pdf.cell(190, 6, f"   - Ruta Critica (Holgura = 0): {', '.join(cp_list)}", 0, 1)
+        pdf.cell(190, 6, f"   - Ruta Critica Identificada: {', '.join(cp_list)}", 0, 1)
         pdf.ln(5)
 
-        # 2. Metodología y Fórmulas
+        # 2. Metodología Aplicada a los Datos
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '2. Metodologia y Formulas Aplicadas:', 0, 1)
+        pdf.cell(190, 8, '2. Desarrollo Matematico con los Datos del Proyecto:', 0, 1)
         
-        # Fórmulas PERT
+        # Fórmulas PERT aplicadas
         pdf.set_font('Arial', 'B', 10)
-        pdf.cell(190, 6, "   A. Tiempos Esperados y Riesgo Estadistico (PERT):", 0, 1)
+        pdf.cell(190, 6, "   A. Calculo de Duracion Total y Desviacion Estandar:", 0, 1)
         pdf.set_font('Arial', '', 10)
-        pdf.cell(190, 5, "      * Tiempo Esperado (t) = (a + 4m + b) / 6", 0, 1)
-        pdf.cell(190, 5, "      * Varianza por Actividad = [(b - a) / 6]^2", 0, 1)
-        pdf.cell(190, 5, "      * Desviacion Est. del Proyecto = Raiz Cuadrada ( Suma de Varianzas Criticas )", 0, 1)
+        pdf.cell(190, 5, f"      * Suma de Tiempos Criticos:  {suma_tiempos_str}  =  {duration:.2f}", 0, 1)
+        pdf.cell(190, 5, f"      * Suma de Varianzas Criticas:  {suma_vars_str}  =  {total_var:.2f}", 0, 1)
+        pdf.cell(190, 5, f"      * Desviacion Estandar (sigma):  Raiz_Cuadrada( {total_var:.2f} )  =  {sd:.4f}", 0, 1)
         pdf.ln(3)
         
-        # Fórmulas CPM
+        # Fórmulas CPM aplicadas
         pdf.set_font('Arial', 'B', 10)
-        pdf.cell(190, 6, "   B. Calculo de Tiempos y Holguras (CPM):", 0, 1)
+        pdf.cell(190, 6, "   B. Comprobacion de Pases y Holgura (Ruta Critica):", 0, 1)
         pdf.set_font('Arial', '', 10)
-        pdf.cell(190, 5, "      * Pase Adelante:  ES (Inicio Temprano) + t  =  EF (Fin Temprano)", 0, 1)
-        pdf.cell(190, 5, "      * Pase Atras:     LF (Fin Tardio) - t       =  LS (Inicio Tardio)", 0, 1)
-        pdf.cell(190, 5, "      * Holgura Total = LS - ES   (o bien, LF - EF)", 0, 1)
+        
+        for _, r in crit_df.iterrows():
+            calc_ida = f"ES({r['ES']}) + t({r['t']}) = EF({r['EF']})"
+            calc_vuelta = f"LF({r['LF']}) - t({r['t']}) = LS({r['LS']})"
+            pdf.cell(190, 5, f"      * Actividad [{r['Actividad']}]:  Ida -> {calc_ida}  |  Vuelta -> {calc_vuelta}   =>  Holgura: 0", 0, 1)
+            
         pdf.ln(5)
 
         # 3. Enfoque del Diagrama
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, f'3. Enfoque del Diagrama ({vista}):', 0, 1)
+        pdf.cell(190, 8, f'3. Enfoque del Diagrama Visual ({vista}):', 0, 1)
         pdf.set_font('Arial', '', 10)
         
         if vista == "Solo Adelante (Sumas)":
@@ -183,14 +193,14 @@ if isinstance(res, tuple):
                                    "de cada actividad.")
         else:
             pdf.multi_cell(190, 5, "   El diagrama muestra el Pase hacia Atras (Backward Pass), detallando "
-                                   "los tiempos limite (LS y LF). Se omiten las duraciones para resaltar "
-                                   "el calculo de la Holgura. Las flechas rojas indican Holgura = 0 (Ruta Critica).")
+                                   "los tiempos limite (LS y LF). Se omiten las duraciones (t) para limpiar visualmente "
+                                   "la red y destacar el calculo de la Holgura total.")
             
         pdf.ln(5)
         
         # Renderizar la red
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '4. Diagrama de Red Estructurado:', 0, 1)
+        pdf.cell(190, 8, '4. Diagrama de Red:', 0, 1)
         
         png_data = grafico_dot.pipe(format='png')
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
