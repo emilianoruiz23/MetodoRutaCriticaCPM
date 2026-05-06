@@ -49,7 +49,7 @@ def calculate_aoa_cpm(df):
 
     if not nx.is_directed_acyclic_graph(G): return "ERROR_CICLO"
 
-    # Forward Pass (Tiempos de Nodos)
+    # Forward Pass
     E = {n: 0 for n in G.nodes()}
     for u in nx.topological_sort(G):
         for v in G.successors(u):
@@ -57,13 +57,13 @@ def calculate_aoa_cpm(df):
     
     project_duration = max(E.values())
     
-    # Backward Pass (Tiempos de Nodos)
+    # Backward Pass
     L = {n: project_duration for n in G.nodes()}
     for u in reversed(list(nx.topological_sort(G))):
         for v in G.successors(u):
             L[u] = min(L[u], L[v] - G[u][v]['t'])
             
-    # Métricas por Arista
+    # Métricas
     edges_results = []
     total_var = 0
     cp_edges = []
@@ -74,7 +74,7 @@ def calculate_aoa_cpm(df):
         lf = L[v]
         ls = lf - d['t']
         slack = ls - es
-        crit = abs(slack) < 0.01 # Tolerancia para decimales
+        crit = abs(slack) < 0.01 
         
         if crit and not d['dummy']:
             total_var += d['var']
@@ -99,21 +99,17 @@ if isinstance(res, tuple):
     
     dot = graphviz.Digraph(graph_attr={'rankdir': 'LR', 'nodesep': '0.6', 'ranksep': '1.2'})
     
-    # Nodos pequeños
     for n in G.nodes():
         dot.node(n, shape='circle', width='0.25', height='0.25', label=n, fontsize='11', style='filled', fillcolor='#f0f2f6')
         
-    # Aristas con etiquetas lógicas (Omitiendo 't' si es hacia atrás)
     for _, r in df_res.iterrows():
         color = 'red' if r['Crit'] else 'black'
         style = 'dashed' if r['Dummy'] else 'solid'
         pen = '2.5' if r['Crit'] else '1.0'
         
-        # Lógica condicional para el texto de la etiqueta
         if vista == "Solo Adelante (Sumas)":
             label_txt = f"[{r['Actividad']}]\nt = {r['t']}  |  $ {r['Costo']}\nES: {r['ES']}  →  EF: {r['EF']}"
         else:
-            # Aquí omitimos la "t" limpiando la vista hacia atrás
             label_txt = f"[{r['Actividad']}]\n$ {r['Costo']}\nLS: {r['LS']}  →  LF: {r['LF']}\nHolgura = {r['Holgura']}"
 
         dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='10', fontcolor=color)
@@ -126,56 +122,75 @@ if isinstance(res, tuple):
     col1.metric("Duración Esperada (μ)", f"{duration:.2f} unidades")
     col2.metric("Desviación (σ)", f"{sd:.4f}")
 
-    # Seleccionar columnas a mostrar
     columnas_mostrar = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
     df_mostrar = df_res[columnas_mostrar]
 
-    # Resaltar en rojo las filas críticas
     def highlight_critical_rows(row):
         color = '#ffe6e6' if abs(row['Holgura']) < 0.01 else ''
         return [f'background-color: {color}'] * len(row)
 
     st.dataframe(df_mostrar.style.apply(highlight_critical_rows, axis=1), use_container_width=True)
 
-    # --- LÓGICA DEL PDF ROBUSTO ---
+    # --- LÓGICA DEL PDF ROBUSTO CON FÓRMULAS ---
     def generate_pdf(grafico_dot):
         pdf = FPDF()
         pdf.add_page()
         
         # Encabezado
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(190, 10, 'Reporte Analitico CPM (Modelo AOA)', 0, 1, 'C')
+        pdf.cell(190, 10, 'Reporte Analitico CPM/PERT (Modelo AOA)', 0, 1, 'C')
         pdf.ln(5)
         
-        # Información Relevante
+        # 1. Información Relevante
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(190, 8, '1. Resumen Ejecutivo:', 0, 1)
-        
         pdf.set_font('Arial', '', 11)
         pdf.cell(190, 6, f"   - Duracion Estimada del Proyecto: {duration:.2f} unidades", 0, 1)
         pdf.cell(190, 6, f"   - Desviacion Estandar: {sd:.4f}", 0, 1)
-        pdf.cell(190, 6, f"   - Ruta Critica (Actividades sin holgura): {', '.join(cp_list)}", 0, 1)
+        pdf.cell(190, 6, f"   - Ruta Critica (Holgura = 0): {', '.join(cp_list)}", 0, 1)
         pdf.ln(5)
 
+        # 2. Metodología y Fórmulas
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '2. Enfoque del Diagrama:', 0, 1)
-        pdf.set_font('Arial', '', 11)
+        pdf.cell(190, 8, '2. Metodologia y Formulas Aplicadas:', 0, 1)
+        
+        # Fórmulas PERT
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(190, 6, "   A. Tiempos Esperados y Riesgo Estadistico (PERT):", 0, 1)
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(190, 5, "      * Tiempo Esperado (t) = (a + 4m + b) / 6", 0, 1)
+        pdf.cell(190, 5, "      * Varianza por Actividad = [(b - a) / 6]^2", 0, 1)
+        pdf.cell(190, 5, "      * Desviacion Est. del Proyecto = Raiz Cuadrada ( Suma de Varianzas Criticas )", 0, 1)
+        pdf.ln(3)
+        
+        # Fórmulas CPM
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(190, 6, "   B. Calculo de Tiempos y Holguras (CPM):", 0, 1)
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(190, 5, "      * Pase Adelante:  ES (Inicio Temprano) + t  =  EF (Fin Temprano)", 0, 1)
+        pdf.cell(190, 5, "      * Pase Atras:     LF (Fin Tardio) - t       =  LS (Inicio Tardio)", 0, 1)
+        pdf.cell(190, 5, "      * Holgura Total = LS - ES   (o bien, LF - EF)", 0, 1)
+        pdf.ln(5)
+
+        # 3. Enfoque del Diagrama
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(190, 8, f'3. Enfoque del Diagrama ({vista}):', 0, 1)
+        pdf.set_font('Arial', '', 10)
         
         if vista == "Solo Adelante (Sumas)":
-            pdf.multi_cell(190, 6, "   El diagrama adjunto muestra el pase hacia adelante (Forward Pass). "
-                                   "Se detallan el Inicio Temprano (ES) y Fin Temprano (EF) de cada actividad. "
-                                   "Los costos y duraciones esperadas (t) se incluyen en los arcos.")
+            pdf.multi_cell(190, 5, "   El diagrama muestra el Pase hacia Adelante (Forward Pass), enfocandose "
+                                   "en los tiempos mas tempranos posibles (ES y EF) y sumando la duracion (t) "
+                                   "de cada actividad.")
         else:
-            pdf.multi_cell(190, 6, "   El diagrama adjunto muestra el pase hacia atras (Backward Pass). "
-                                   "Se detallan el Inicio Tardio (LS), el Fin Tardio (LF) y se destaca "
-                                   "explicita la 'Holgura' de cada actividad, omitiendo los tiempos para mayor claridad. "
-                                   "Las rutas en rojo representan holgura cero.")
+            pdf.multi_cell(190, 5, "   El diagrama muestra el Pase hacia Atras (Backward Pass), detallando "
+                                   "los tiempos limite (LS y LF). Se omiten las duraciones para resaltar "
+                                   "el calculo de la Holgura. Las flechas rojas indican Holgura = 0 (Ruta Critica).")
             
-        pdf.ln(10)
+        pdf.ln(5)
         
-        # Renderizar la red en el PDF (capturando el dot exacto con/sin la 't')
+        # Renderizar la red
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '3. Diagrama de Red Estructurado:', 0, 1)
+        pdf.cell(190, 8, '4. Diagrama de Red Estructurado:', 0, 1)
         
         png_data = grafico_dot.pipe(format='png')
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
