@@ -7,10 +7,10 @@ import graphviz
 import tempfile
 import os
 
-st.set_page_config(layout="wide", page_title="CPM Avanzado - Etiquetas en Aristas")
+st.set_page_config(layout="wide", page_title="CPM Maestro - Vista Integral")
 
-st.title("Calculadora CPM/PERT: Modelo de Actividad en la Arista (AOA)")
-st.markdown("En este modelo, los **nodos** son hitos (círculos pequeños) y las **flechas** llevan el etiquetado. Las actividades críticas se resaltarán automáticamente.")
+st.title("Calculadora CPM/PERT Avanzada: Memoria de Cálculo Integral")
+st.markdown("Agrega tus actividades. El sistema calculará automáticamente los pases adelante, atrás y holguras.")
 
 # --- 1. ENTRADA DE DATOS ---
 st.header("1. Configuración de Actividades")
@@ -26,19 +26,19 @@ default_data = [
 df_input = pd.DataFrame(default_data)
 edited_df = st.data_editor(df_input, num_rows="dynamic", use_container_width=True)
 
-# Opciones de visualización simplificadas
-st.sidebar.header("Vista de Etiquetas")
-vista = st.sidebar.radio("Mostrar en diagrama:", ["Solo Adelante (Sumas)", "Solo Atrás (Restas y Holguras)"])
+# Opciones de visualización
+st.sidebar.header("Control de Visualización")
+vista = st.sidebar.radio("Modo de Análisis:", 
+                         ["Vista Mixta (Completa)", "Solo Adelante (Sumas)", "Solo Atrás (Restas y Holguras)"])
 
 # --- 2. MOTOR DE CÁLCULO CPM ---
-def calculate_aoa_cpm(df):
+def calculate_integral_cpm(df):
     if df.empty: return None
     
     df_c = df.copy()
     for col in ['a', 'm', 'b', 'Costo']:
         df_c[col] = pd.to_numeric(df_c[col], errors='coerce').fillna(0)
     
-    # PERT
     df_c['te'] = (df_c['a'] + 4 * df_c['m'] + df_c['b']) / 6
     df_c['var'] = ((df_c['b'] - df_c['a']) / 6)**2
     
@@ -63,22 +63,19 @@ def calculate_aoa_cpm(df):
         for v in G.successors(u):
             L[u] = min(L[u], L[v] - G[u][v]['t'])
             
-    # Métricas
     edges_results = []
     total_var = 0
-    cp_edges = []
+    cp_list = []
     
     for u, v, d in G.edges(data=True):
-        es = E[u]
-        ef = es + d['t']
-        lf = L[v]
-        ls = lf - d['t']
+        es, ef = E[u], E[u] + d['t']
+        lf, ls = L[v], L[v] - d['t']
         slack = ls - es
         crit = abs(slack) < 0.01 
         
         if crit and not d['dummy']:
             total_var += d['var']
-            cp_edges.append(d['id'])
+            cp_list.append(d['id'])
             
         edges_results.append({
             'Actividad': d['id'], 'Desde': u, 'Hasta': v, 't': round(d['t'], 2), 'Costo': d['cost'],
@@ -86,18 +83,17 @@ def calculate_aoa_cpm(df):
             'Holgura': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy'], 'Var': d['var']
         })
 
-    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_edges, total_var
+    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_list, total_var
 
-res = calculate_aoa_cpm(edited_df)
+res = calculate_integral_cpm(edited_df)
 
 # --- 3. DESPLIEGUE ---
 if isinstance(res, tuple):
     G, df_res, duration, sd, cp_list, total_var = res
     
-    # --- RED VISUAL ---
-    st.header(f"2. Diagrama de Red ({vista})")
+    st.header(f"2. Diagrama de Red Integral")
     
-    dot = graphviz.Digraph(graph_attr={'rankdir': 'LR', 'nodesep': '0.6', 'ranksep': '1.2'})
+    dot = graphviz.Digraph(graph_attr={'rankdir': 'LR', 'nodesep': '0.7', 'ranksep': '1.3'})
     
     for n in G.nodes():
         dot.node(n, shape='circle', width='0.25', height='0.25', label=n, fontsize='11', style='filled', fillcolor='#f0f2f6')
@@ -107,115 +103,89 @@ if isinstance(res, tuple):
         style = 'dashed' if r['Dummy'] else 'solid'
         pen = '2.5' if r['Crit'] else '1.0'
         
-        if vista == "Solo Adelante (Sumas)":
-            label_txt = f"[{r['Actividad']}]\nt = {r['t']}  |  $ {r['Costo']}\nES: {r['ES']}  →  EF: {r['EF']}"
+        # ETIQUETADO MIXTO / COMPLETO
+        header = f"[{r['Actividad']}]  $ {r['Costo']}"
+        fwd = f"Ida (ES→EF): {r['ES']} → {r['EF']}"
+        bwd = f"Vuelta (LS→LF): {r['LS']} → {r['LF']}"
+        hol = f"Holgura: {r['Holgura']}"
+        
+        if vista == "Vista Mixta (Completa)":
+            label_txt = f"{header}\n{fwd}\n{bwd}\n{hol}"
+        elif vista == "Solo Adelante (Sumas)":
+            label_txt = f"{header}\nt = {r['t']}\n{fwd}"
         else:
-            label_txt = f"[{r['Actividad']}]\n$ {r['Costo']}\nLS: {r['LS']}  →  LF: {r['LF']}\nHolgura = {r['Holgura']}"
+            label_txt = f"{header}\n{bwd}\n{hol}"
 
-        dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='10', fontcolor=color)
+        dot.edge(str(r['Desde']), str(r['Hasta']), label=label_txt, color=color, style=style, penwidth=pen, fontsize='9', fontcolor=color)
 
     st.graphviz_chart(dot)
 
-    # --- TABLA E INFO ---
-    st.header("3. Resultados y Reporte")
+    st.header("3. Memoria de Resultados Técnicos")
     col1, col2 = st.columns(2)
-    col1.metric("Duración Esperada (μ)", f"{duration:.2f} unidades")
-    col2.metric("Desviación (σ)", f"{sd:.4f}")
+    col1.metric("Duración Total (μ)", f"{duration:.2f} unidades")
+    col2.metric("Desviación Estándar (σ)", f"{sd:.4f}")
 
-    columnas_mostrar = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
-    df_mostrar = df_res[columnas_mostrar]
+    # Tabla con Resaltado Rojo
+    columnas = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
+    st.dataframe(df_res[columnas].style.apply(lambda r: ['background-color: #ffe6e6']*len(r) if abs(r['Holgura']) < 0.01 else ['']*len(r), axis=1), use_container_width=True)
 
-    def highlight_critical_rows(row):
-        color = '#ffe6e6' if abs(row['Holgura']) < 0.01 else ''
-        return [f'background-color: {color}'] * len(row)
-
-    st.dataframe(df_mostrar.style.apply(highlight_critical_rows, axis=1), use_container_width=True)
-
-    # --- LÓGICA DEL PDF ROBUSTO CON MEMORIA DE CÁLCULO ---
+    # --- LÓGICA DEL PDF MIXTO ---
     def generate_pdf(grafico_dot):
         pdf = FPDF()
         pdf.add_page()
         
-        # Filtramos solo las actividades críticas reales para el reporte matemático
-        crit_df = df_res[(df_res['Crit'] == True) & (df_res['Dummy'] == False)]
-        
-        # Strings dinámicos con los datos actuales
-        suma_vars_str = " + ".join([f"{r['Var']:.2f}" for _, r in crit_df.iterrows()])
-        suma_tiempos_str = " + ".join([f"{r['t']:.2f}" for _, r in crit_df.iterrows()])
-        
-        # Encabezado
+        # 1. Encabezado
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(190, 10, 'Memoria de Calculo CPM/PERT (Modelo AOA)', 0, 1, 'C')
+        pdf.cell(190, 10, 'Reporte Integral CPM/PERT - Memoria Técnica', 0, 1, 'C')
         pdf.ln(5)
         
-        # 1. Información Relevante
+        # 2. Resumen
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '1. Resumen de Resultados:', 0, 1)
+        pdf.cell(190, 8, '1. Resumen de Proyecto:', 0, 1)
         pdf.set_font('Arial', '', 11)
-        pdf.cell(190, 6, f"   - Duracion Estimada del Proyecto: {duration:.2f} unidades", 0, 1)
-        pdf.cell(190, 6, f"   - Desviacion Estandar: {sd:.4f}", 0, 1)
-        pdf.cell(190, 6, f"   - Ruta Critica Identificada: {', '.join(cp_list)}", 0, 1)
+        pdf.cell(190, 6, f"   - Duracion Final Calculada: {duration:.2f} unidades", 0, 1)
+        pdf.cell(190, 6, f"   - Riesgo Estimado (sigma): {sd:.4f}", 0, 1)
+        pdf.cell(190, 6, f"   - Actividades Criticas: {', '.join(cp_list)}", 0, 1)
         pdf.ln(5)
 
-        # 2. Metodología Aplicada a los Datos
+        # 3. Matemática Particular (DATOS REALES)
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '2. Desarrollo Matematico con los Datos del Proyecto:', 0, 1)
-        
-        # Fórmulas PERT aplicadas
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(190, 6, "   A. Calculo de Duracion Total y Desviacion Estandar:", 0, 1)
+        pdf.cell(190, 8, '2. Memoria de Calculo (Datos del Proyecto):', 0, 1)
         pdf.set_font('Arial', '', 10)
-        pdf.cell(190, 5, f"      * Suma de Tiempos Criticos:  {suma_tiempos_str}  =  {duration:.2f}", 0, 1)
-        pdf.cell(190, 5, f"      * Suma de Varianzas Criticas:  {suma_vars_str}  =  {total_var:.2f}", 0, 1)
-        pdf.cell(190, 5, f"      * Desviacion Estandar (sigma):  Raiz_Cuadrada( {total_var:.2f} )  =  {sd:.4f}", 0, 1)
+        
+        crit_df = df_res[df_res['Crit'] == True]
+        suma_t = " + ".join([f"{r['t']}" for _, r in crit_df.iterrows()])
+        suma_v = " + ".join([f"{r['Var']:.2f}" for _, r in crit_df.iterrows()])
+        
+        pdf.cell(190, 6, f"   * Calculo Duracion: {suma_t} = {duration:.2f}", 0, 1)
+        pdf.cell(190, 6, f"   * Calculo Riesgo: Raiz({suma_v}) = {sd:.4f}", 0, 1)
         pdf.ln(3)
-        
-        # Fórmulas CPM aplicadas
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(190, 6, "   B. Comprobacion de Pases y Holgura (Ruta Critica):", 0, 1)
-        pdf.set_font('Arial', '', 10)
-        
-        for _, r in crit_df.iterrows():
-            calc_ida = f"ES({r['ES']}) + t({r['t']}) = EF({r['EF']})"
-            calc_vuelta = f"LF({r['LF']}) - t({r['t']}) = LS({r['LS']})"
-            pdf.cell(190, 5, f"      * Actividad [{r['Actividad']}]:  Ida -> {calc_ida}  |  Vuelta -> {calc_vuelta}   =>  Holgura: 0", 0, 1)
-            
-        pdf.ln(5)
 
-        # 3. Enfoque del Diagrama
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, f'3. Enfoque del Diagrama Visual ({vista}):', 0, 1)
-        pdf.set_font('Arial', '', 10)
+        pdf.set_font('Arial', 'I', 10)
+        pdf.cell(190, 6, "   * Verificacion de Pases en Ruta Critica:", 0, 1)
+        pdf.set_font('Arial', '', 9)
+        for _, r in crit_df.iterrows():
+            if r['Dummy']: continue
+            linea = f"     - [{r['Actividad']}]: IDA {r['ES']}+{r['t']}={r['EF']} | VUELTA {r['LF']}-{r['t']}={r['LS']} | Holgura: 0"
+            pdf.cell(190, 5, linea, 0, 1)
         
-        if vista == "Solo Adelante (Sumas)":
-            pdf.multi_cell(190, 5, "   El diagrama muestra el Pase hacia Adelante (Forward Pass), enfocandose "
-                                   "en los tiempos mas tempranos posibles (ES y EF) y sumando la duracion (t) "
-                                   "de cada actividad.")
-        else:
-            pdf.multi_cell(190, 5, "   El diagrama muestra el Pase hacia Atras (Backward Pass), detallando "
-                                   "los tiempos limite (LS y LF). Se omiten las duraciones (t) para limpiar visualmente "
-                                   "la red y destacar el calculo de la Holgura total.")
-            
-        pdf.ln(5)
-        
-        # Renderizar la red
+        pdf.ln(10)
+
+        # 4. Diagrama de Red
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '4. Diagrama de Red:', 0, 1)
+        pdf.cell(190, 8, '3. Diagrama de Red (Vista Integral Mixta):', 0, 1)
         
         png_data = grafico_dot.pipe(format='png')
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             tmp.write(png_data)
-            tmp_path = tmp.name
-        
-        # Insertar imagen
-        pdf.image(tmp_path, x=10, w=190)
-        os.unlink(tmp_path)
+            pdf.image(tmp.name, x=10, w=190)
+        os.unlink(tmp.name)
         
         return pdf.output(dest='S').encode('latin1')
 
-    if st.button("Generar y Descargar Reporte PDF"):
+    if st.button("Generar y Descargar Reporte PDF Integral"):
         pdf_bytes = generate_pdf(dot)
-        st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_Detallado_CPM.pdf", mime="application/pdf")
+        st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_CPM_Integral.pdf", mime="application/pdf")
 
 elif res == "ERROR_CICLO":
-    st.error("Error: Se detectó un ciclo infinito en la red. Revisa los nodos 'Desde' y 'Hasta'.")
+    st.error("Error: Se detectó un ciclo infinito en la red.")
