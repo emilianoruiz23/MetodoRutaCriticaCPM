@@ -129,14 +129,14 @@ if isinstance(res, tuple):
     columnas = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
     st.dataframe(df_res[columnas].style.apply(lambda r: ['background-color: #ffe6e6']*len(r) if abs(r['Holgura']) < 0.01 else ['']*len(r), axis=1), use_container_width=True)
 
-    # --- LÓGICA DEL PDF MIXTO ---
+    # --- LÓGICA DEL PDF MIXTO CON FIX DE IMAGEN ---
     def generate_pdf(grafico_dot):
         pdf = FPDF()
         pdf.add_page()
         
         # 1. Encabezado
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(190, 10, 'Reporte Integral CPM/PERT - Memoria Técnica', 0, 1, 'C')
+        pdf.cell(190, 10, 'Reporte Integral CPM/PERT - Memoria Tecnica', 0, 1, 'C')
         pdf.ln(5)
         
         # 2. Resumen
@@ -173,13 +173,18 @@ if isinstance(res, tuple):
 
         # 4. Diagrama de Red
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '3. Diagrama de Red (Vista Integral Mixta):', 0, 1)
+        pdf.cell(190, 8, f'3. Diagrama de Red ({vista}):', 0, 1)
         
         png_data = grafico_dot.pipe(format='png')
+        
+        # Bloque corregido para evitar el error 'Not a PNG file'
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             tmp.write(png_data)
-            pdf.image(tmp.name, x=10, w=190)
-        os.unlink(tmp.name)
+            tmp_path = tmp.name
+            
+        # Fuera del 'with', la imagen se inserta y luego se borra
+        pdf.image(tmp_path, x=10, w=190)
+        os.unlink(tmp_path)
         
         return pdf.output(dest='S').encode('latin1')
 
