@@ -43,7 +43,10 @@ def calculate_integral_cpm(df):
     df_c['var'] = ((df_c['b'] - df_c['a']) / 6)**2
     
     G = nx.DiGraph()
+    total_cost = 0
+    
     for _, r in df_c.iterrows():
+        total_cost += r['Costo'] if not r['Ficticia'] else 0
         G.add_edge(str(r['Desde']), str(r['Hasta']), 
                    id=r['Actividad'], t=r['te'], cost=r['Costo'], dummy=r['Ficticia'], var=r['var'])
 
@@ -83,13 +86,13 @@ def calculate_integral_cpm(df):
             'Holgura': round(slack, 2), 'Crit': crit, 'Dummy': d['dummy'], 'Var': d['var']
         })
 
-    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_list, total_var
+    return G, pd.DataFrame(edges_results), project_duration, np.sqrt(total_var), cp_list, total_var, total_cost
 
 res = calculate_integral_cpm(edited_df)
 
 # --- 3. DESPLIEGUE ---
 if isinstance(res, tuple):
-    G, df_res, duration, sd, cp_list, total_var = res
+    G, df_res, duration, sd, cp_list, total_var, total_cost = res
     
     st.header(f"2. Diagrama de Red Integral")
     
@@ -103,7 +106,6 @@ if isinstance(res, tuple):
         style = 'dashed' if r['Dummy'] else 'solid'
         pen = '2.5' if r['Crit'] else '1.0'
         
-        # ETIQUETADO MIXTO / COMPLETO
         header = f"[{r['Actividad']}]  $ {r['Costo']}"
         fwd = f"Ida (ES→EF): {r['ES']} → {r['EF']}"
         bwd = f"Vuelta (LS→LF): {r['LS']} → {r['LF']}"
@@ -121,68 +123,123 @@ if isinstance(res, tuple):
     st.graphviz_chart(dot)
 
     st.header("3. Memoria de Resultados Técnicos")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     col1.metric("Duración Total (μ)", f"{duration:.2f} unidades")
     col2.metric("Desviación Estándar (σ)", f"{sd:.4f}")
+    col3.metric("Costo Estimado", f"${total_cost:,.2f}")
 
-    # Tabla con Resaltado Rojo
-    columnas = ['Actividad', 'Desde', 'Hasta', 't', 'ES', 'EF', 'LS', 'LF', 'Holgura']
+    columnas = ['Actividad', 'Desde', 'Hasta', 't', 'Costo', 'ES', 'EF', 'LS', 'LF', 'Holgura']
     st.dataframe(df_res[columnas].style.apply(lambda r: ['background-color: #ffe6e6']*len(r) if abs(r['Holgura']) < 0.01 else ['']*len(r), axis=1), use_container_width=True)
 
-    # --- LÓGICA DEL PDF MIXTO CON FIX DE IMAGEN ---
+    # --- LÓGICA DEL PDF ROBUSTECIDO ---
     def generate_pdf(grafico_dot):
         pdf = FPDF()
         pdf.add_page()
         
         # 1. Encabezado
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(190, 10, 'Reporte Integral CPM/PERT - Memoria Tecnica', 0, 1, 'C')
+        pdf.cell(190, 10, 'Dossier Analitico CPM/PERT - Reporte de Proyecto', 0, 1, 'C')
         pdf.ln(5)
         
-        # 2. Resumen
+        # 2. Resumen Ejecutivo
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '1. Resumen de Proyecto:', 0, 1)
+        pdf.cell(190, 8, '1. Resumen Ejecutivo del Proyecto:', 0, 1)
         pdf.set_font('Arial', '', 11)
-        pdf.cell(190, 6, f"   - Duracion Final Calculada: {duration:.2f} unidades", 0, 1)
+        pdf.cell(190, 6, f"   - Duracion Final Calculada: {duration:.2f} unidades de tiempo", 0, 1)
+        pdf.cell(190, 6, f"   - Inversion / Costo Total: ${total_cost:,.2f}", 0, 1)
         pdf.cell(190, 6, f"   - Riesgo Estimado (sigma): {sd:.4f}", 0, 1)
-        pdf.cell(190, 6, f"   - Actividades Criticas: {', '.join(cp_list)}", 0, 1)
+        pdf.cell(190, 6, f"   - Ruta Critica (Actividades sin margen de retraso): {', '.join(cp_list)}", 0, 1)
         pdf.ln(5)
 
-        # 3. Matemática Particular (DATOS REALES)
+        # 3. Glosario de Términos
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, '2. Memoria de Calculo (Datos del Proyecto):', 0, 1)
+        pdf.cell(190, 8, '2. Glosario de Terminos (Nomenclatura):', 0, 1)
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(190, 5, "   * t (Tiempo Esperado): Duracion calculada por PERT (a+4m+b)/6.", 0, 1)
+        pdf.cell(190, 5, "   * ES (Early Start): Inicio mas temprano posible de la actividad.", 0, 1)
+        pdf.cell(190, 5, "   * EF (Early Finish): Fin mas temprano posible (ES + t).", 0, 1)
+        pdf.cell(190, 5, "   * LS (Late Start): Inicio mas tardio permitido sin retrasar el proyecto (LF - t).", 0, 1)
+        pdf.cell(190, 5, "   * LF (Late Finish): Fin mas tardio permitido.", 0, 1)
+        pdf.cell(190, 5, "   * Holgura: Margen de retraso permitido (LS - ES). Si es 0, es Ruta Critica.", 0, 1)
+        pdf.ln(5)
+
+        # 4. Memoria de Cálculo (Ruta Crítica)
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(190, 8, '3. Memoria de Calculo (Comprobacion Matematica):', 0, 1)
         pdf.set_font('Arial', '', 10)
         
         crit_df = df_res[df_res['Crit'] == True]
         suma_t = " + ".join([f"{r['t']}" for _, r in crit_df.iterrows()])
         suma_v = " + ".join([f"{r['Var']:.2f}" for _, r in crit_df.iterrows()])
         
-        pdf.cell(190, 6, f"   * Calculo Duracion: {suma_t} = {duration:.2f}", 0, 1)
-        pdf.cell(190, 6, f"   * Calculo Riesgo: Raiz({suma_v}) = {sd:.4f}", 0, 1)
-        pdf.ln(3)
+        pdf.cell(190, 6, f"   * Calculo Duracion Total: {suma_t} = {duration:.2f}", 0, 1)
+        pdf.cell(190, 6, f"   * Calculo Riesgo: Raiz_Cuadrada({suma_v}) = {sd:.4f}", 0, 1)
+        pdf.ln(2)
 
         pdf.set_font('Arial', 'I', 10)
-        pdf.cell(190, 6, "   * Verificacion de Pases en Ruta Critica:", 0, 1)
+        pdf.cell(190, 6, "   * Verificacion de Pases en Ruta Critica (Ida y Vuelta):", 0, 1)
         pdf.set_font('Arial', '', 9)
         for _, r in crit_df.iterrows():
             if r['Dummy']: continue
-            linea = f"     - [{r['Actividad']}]: IDA {r['ES']}+{r['t']}={r['EF']} | VUELTA {r['LF']}-{r['t']}={r['LS']} | Holgura: 0"
+            linea = f"     - [{r['Actividad']}]: IDA -> ES({r['ES']}) + t({r['t']}) = EF({r['EF']})  |  VUELTA -> LF({r['LF']}) - t({r['t']}) = LS({r['LS']})"
             pdf.cell(190, 5, linea, 0, 1)
         
-        pdf.ln(10)
+        pdf.ln(8)
 
-        # 4. Diagrama de Red
+        # 5. Tabla Completa de Resultados
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(190, 8, f'3. Diagrama de Red ({vista}):', 0, 1)
+        pdf.cell(190, 8, '4. Tabla Maestra de Resultados por Actividad:', 0, 1)
+        
+        # Configuración de la tabla
+        pdf.set_font('Arial', 'B', 9)
+        pdf.set_fill_color(230, 230, 230)
+        # Anchos: Act(20), De(15), A(15), t(15), Costo(25), ES(15), EF(15), LS(15), LF(15), Holgura(25) = Total 175
+        col_widths = [20, 15, 15, 15, 25, 15, 15, 15, 15, 25]
+        headers = ['Actividad', 'Desde', 'Hasta', 't', 'Costo ($)', 'ES', 'EF', 'LS', 'LF', 'Holgura']
+        
+        # Imprimir Cabeceras
+        for col_name, w in zip(headers, col_widths):
+            pdf.cell(w, 7, col_name, 1, 0, 'C', 1)
+        pdf.ln()
+        
+        # Imprimir Filas
+        pdf.set_font('Arial', '', 9)
+        for _, r in df_res.iterrows():
+            if r['Dummy']: continue # Omitir ficticias en la tabla impresa para mayor limpieza
+            
+            # Si es ruta crítica, ponemos texto en rojo
+            if r['Crit']:
+                pdf.set_text_color(200, 0, 0)
+            else:
+                pdf.set_text_color(0, 0, 0)
+                
+            pdf.cell(col_widths[0], 6, str(r['Actividad']), 1, 0, 'C')
+            pdf.cell(col_widths[1], 6, str(r['Desde']), 1, 0, 'C')
+            pdf.cell(col_widths[2], 6, str(r['Hasta']), 1, 0, 'C')
+            pdf.cell(col_widths[3], 6, f"{r['t']:.2f}", 1, 0, 'C')
+            pdf.cell(col_widths[4], 6, f"${r['Costo']:,.2f}", 1, 0, 'C')
+            pdf.cell(col_widths[5], 6, f"{r['ES']:.2f}", 1, 0, 'C')
+            pdf.cell(col_widths[6], 6, f"{r['EF']:.2f}", 1, 0, 'C')
+            pdf.cell(col_widths[7], 6, f"{r['LS']:.2f}", 1, 0, 'C')
+            pdf.cell(col_widths[8], 6, f"{r['LF']:.2f}", 1, 0, 'C')
+            pdf.cell(col_widths[9], 6, f"{r['Holgura']:.2f}", 1, 0, 'C')
+            pdf.ln()
+            
+        # Resetear color a negro
+        pdf.set_text_color(0, 0, 0)
+        
+        # 6. Diagrama de Red (EN UNA NUEVA PÁGINA PARA MAYOR TAMAÑO)
+        pdf.add_page() # Salto de página
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(190, 10, f'5. Diagrama de Red del Proyecto ({vista}):', 0, 1, 'C')
+        pdf.ln(5)
         
         png_data = grafico_dot.pipe(format='png')
-        
-        # Bloque corregido para evitar el error 'Not a PNG file'
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             tmp.write(png_data)
             tmp_path = tmp.name
             
-        # Fuera del 'with', la imagen se inserta y luego se borra
+        # Como está en su propia página, podemos hacerlo mucho más grande (w=190 abarca todo el ancho)
         pdf.image(tmp_path, x=10, w=190)
         os.unlink(tmp_path)
         
@@ -190,7 +247,7 @@ if isinstance(res, tuple):
 
     if st.button("Generar y Descargar Reporte PDF Integral"):
         pdf_bytes = generate_pdf(dot)
-        st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Reporte_CPM_Integral.pdf", mime="application/pdf")
+        st.download_button(label="Descargar PDF", data=pdf_bytes, file_name="Dossier_CPM_Completo.pdf", mime="application/pdf")
 
 elif res == "ERROR_CICLO":
     st.error("Error: Se detectó un ciclo infinito en la red.")
