@@ -38,7 +38,7 @@ El flujo de trabajo se divide en cuatro fases lógicas:
 
 ## Vista streamlit.app
 PERT/CPM — Red a Escala de Tiempo
-https://metodorutacriticacpm-3j45orebdjivbfrujuu4qz.streamlit.app/
+https://metodorutacriticacpm-d9d9r4kqsras5vol528c7j.streamlit.app/
 Calculadora CPM/PERT
 https://metodorutacriticacpm-bpukhuhwepprtscz2amnrm.streamlit.app/
 
